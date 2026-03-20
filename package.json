@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "name": "mocheong-workspace",
+  "scripts": {
+    "dev": "npm run dev --prefix invitation-builder",
+    "build": "npm run build --prefix invitation-builder",
+    "start": "npm run start --prefix invitation-builder",
+    "lint": "npm run lint --prefix invitation-builder"
+  }
+}

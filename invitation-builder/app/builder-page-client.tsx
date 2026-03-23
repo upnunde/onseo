@@ -2,7 +2,18 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Palette, Music, Image as ImageIcon, Users, MessageSquare, CalendarHeart, MapPin, Bell, Images, Wallet, BookOpen, Youtube, Share2, Shield, CheckCircle2, GripVertical, Play, Pause, VolumeX, Volume2, X, ChevronDown, Pencil, Trash2, RotateCw, RefreshCcw, Move } from 'lucide-react';
+import { Palette, Music, Image as ImageIcon, Users, MessageSquare, CalendarHeart, MapPin, Bell, Images, Wallet, BookOpen, Youtube, Share2, Shield, CheckCircle2, GripVertical, Play, Pause, VolumeX, Volume2, X, ChevronDown, ChevronLeft, ChevronRight, Pencil, Trash2, RotateCw, RefreshCcw, Move } from 'lucide-react';
+
+const DEFAULT_LOCATION_PREVIEW_COORDS = { lat: 37.579617, lon: 126.977041 }; // 경복궁
+
+function buildOsmEmbedUrl(lat: number, lon: number) {
+  const delta = 0.01;
+  const left = lon - delta;
+  const bottom = lat - delta;
+  const right = lon + delta;
+  const top = lat + delta;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${lat}%2C${lon}`;
+}
 
 function AppLabel({
   className = '',
@@ -109,6 +120,32 @@ function fontScaleToPercent(scale: unknown) {
     default:
       return 100;
   }
+}
+
+function getYoutubeVideoId(rawUrl: string) {
+  const input = (rawUrl || "").trim();
+  if (!input) return null as string | null;
+  const directId = input.match(/^[a-zA-Z0-9_-]{11}$/)?.[0];
+  if (directId) return directId;
+  try {
+    const u = new URL(input);
+    if (u.hostname.includes("youtu.be")) {
+      const id = u.pathname.replace("/", "").trim();
+      if (id) return id;
+    }
+    if (u.hostname.includes("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v) return v;
+      const parts = u.pathname.split("/").filter(Boolean);
+      const maybeId = parts[parts.length - 1];
+      if (["embed", "shorts"].includes(parts[0]) && maybeId) {
+        return maybeId;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function normalizeTransitionEffect(raw: unknown) {
@@ -226,6 +263,7 @@ function NaverMapEmbed({
       const map = new window.naver.maps.Map(containerRef.current, {
         center,
         zoom: 16,
+        mapTypeId: window.naver.maps.MapTypeId.NORMAL,
         scaleControl: false,
         logoControl: false,
         mapDataControl: false,
@@ -345,9 +383,11 @@ const sidebarItems = [
   { id: 'account', icon: Wallet, label: '계좌정보', category: '선택', hasSwitch: true },
   { id: 'guestbook', icon: BookOpen, label: '방명록', category: '선택', hasSwitch: true },
   { id: 'youtube', icon: Youtube, label: '유튜브', category: '선택', hasSwitch: true },
-  { id: 'share', icon: Share2, label: '공유', category: '선택', hasSwitch: true },
-  { id: 'protect', icon: Shield, label: '보호', category: '선택', hasSwitch: true },
+  { id: 'share', icon: Share2, label: '공유', category: '선택' },
+  { id: 'protect', icon: Shield, label: '보호', category: '선택' },
 ];
+
+const OTHER_OPTION_IDS = ['share', 'protect'] as const;
 
 const builtInTracks = [
   // NOTE: 샘플 내장 음원(스트리밍 URL). 필요하면 추후 public/로 옮겨서 로컬 제공 가능.
@@ -683,7 +723,7 @@ function GalleryImageGrid({
 export default function BuilderPageClient({ initialParams, initialSearchParams }: any) {
   const [activeSection, setActiveSection] = useState(sidebarItems[0].id);
   const { data, updateData } = useCardStore();
-  const layoutOrder = ['main', 'greeting', 'hosts', 'eventInfo', 'location'];
+  const baseLayoutOrder = ['main', 'greeting', 'hosts', 'eventInfo', 'location'];
   const sectionEnabled = data.sectionEnabled ?? {};
   const setSectionEnabled = (updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
     const next = typeof updater === 'function' ? updater(sectionEnabled) : updater;
@@ -696,7 +736,9 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   // 선택사항 목록 순서 (드래그로 변경)
   const [optionalOrder, setOptionalOrder] = useState<string[]>(() =>
-    sidebarItems.filter((i) => i.category === '선택').map((i) => i.id)
+    sidebarItems
+      .filter((i) => i.category === '선택' && !OTHER_OPTION_IDS.includes(i.id as any))
+      .map((i) => i.id)
   );
 
   const showHostContacts = !!(data.hosts as any).showContacts;
@@ -706,20 +748,62 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   const [greetingSampleOpen, setGreetingSampleOpen] = useState(false);
   const [greetingSampleTab, setGreetingSampleTab] = useState<'general' | 'hosts' | 'religion'>('general');
   const [greetingSelectedSample, setGreetingSelectedSample] = useState<{ title: string; content: string } | null>(null);
+  const [noticeSampleOpen, setNoticeSampleOpen] = useState(false);
+  const [noticeSampleTab, setNoticeSampleTab] = useState<'general' | 'parking' | 'meal'>('general');
+  const [noticeSelectedSample, setNoticeSelectedSample] = useState<{ title: string; content: string } | null>(null);
   const [locationSearchOpen, setLocationSearchOpen] = useState(false);
   const [locationSearchQuery, setLocationSearchQuery] = useState('');
   const [locationSearchSelected, setLocationSearchSelected] = useState<string | null>(null);
   const [locationPreviewCoords, setLocationPreviewCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [locationPreviewLoading, setLocationPreviewLoading] = useState(false);
   const [naverPreviewFailed, setNaverPreviewFailed] = useState(false);
+  const [previewVisibleSections, setPreviewVisibleSections] = useState<Record<string, boolean>>({});
+  const [sharePreviewOpen, setSharePreviewOpen] = useState(false);
+  const [galleryDetailOpen, setGalleryDetailOpen] = useState(false);
+  const [galleryDetailIndex, setGalleryDetailIndex] = useState(0);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setNaverPreviewFailed(false);
   }, [locationPreviewCoords?.lat, locationPreviewCoords?.lon]);
 
+  useEffect(() => {
+    if (!data.theme.scrollEffect) {
+      setPreviewVisibleSections({});
+      return;
+    }
+    const root = previewScrollRef.current;
+    if (!root) return;
+    const targets = Array.from(root.querySelectorAll<HTMLElement>('[data-preview-section-id]'));
+    if (targets.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setPreviewVisibleSections((prev) => {
+          const next = { ...prev };
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const id = (entry.target as HTMLElement).dataset.previewSectionId;
+              if (id) next[id] = true;
+            }
+          }
+          return next;
+        });
+      },
+      { root, threshold: 0.18, rootMargin: '0px 0px -8% 0px' },
+    );
+
+    targets.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [data.theme.scrollEffect, data.sectionEnabled, optionalOrder]);
+
   const [mainPreviewIndex, setMainPreviewIndex] = useState(0);
   const [mainPreviewPrevIndex, setMainPreviewPrevIndex] = useState<number | null>(null);
   const [mainPreviewAnimKey, setMainPreviewAnimKey] = useState(0);
+  const [galleryPreviewIndex, setGalleryPreviewIndex] = useState(0);
+  const [galleryGridVisibleRows, setGalleryGridVisibleRows] = useState(3);
+  const [guestbookPreviewPage, setGuestbookPreviewPage] = useState(1);
+  const gallerySwipeStartXRef = useRef<number | null>(null);
   const [mainPreviewRandomEffect, setMainPreviewRandomEffect] = useState<
     | '크로스페이드'
     | '디졸브'
@@ -727,6 +811,19 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
     | '켄번즈(줌 인)'
     | '켄번즈(줌 아웃)'
   >('크로스페이드');
+
+  useEffect(() => {
+    setGalleryGridVisibleRows(3);
+  }, [
+    (data.gallery as any)?.layoutType,
+    (data.gallery as any)?.gridColumns,
+    (data.gallery as any)?.useLoadMore,
+    Array.isArray((data.gallery as any)?.images) ? (data.gallery as any).images.length : 0,
+  ]);
+
+  useEffect(() => {
+    setGuestbookPreviewPage(1);
+  }, [Array.isArray((data.guestbook as any)?.entries) ? (data.guestbook as any).entries.length : 0]);
 
   const [imageEditorOpen, setImageEditorOpen] = useState(false);
   const [imageEditorSrc, setImageEditorSrc] = useState<string>('');
@@ -758,6 +855,28 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
     updateData('location.subway', next[0]?.mode ?? '');
     updateData('location.bus', next[0]?.detail ?? '');
   };
+
+  const galleryDetailImages = useMemo(
+    () =>
+      Array.isArray((data.gallery as any)?.images)
+        ? (data.gallery as any).images.filter((u: unknown) => typeof u === "string" && u.trim().length > 0)
+        : [],
+    [data.gallery],
+  );
+
+  useEffect(() => {
+    if (!galleryDetailImages.length) {
+      setGalleryDetailOpen(false);
+      setGalleryDetailIndex(0);
+      return;
+    }
+    if (galleryDetailIndex > galleryDetailImages.length - 1) {
+      setGalleryDetailIndex(galleryDetailImages.length - 1);
+    }
+  }, [galleryDetailImages, galleryDetailIndex]);
+
+  const galleryDetailRatioClass =
+    ((data.gallery as any)?.imageRatio ?? 'portrait') === 'square' ? 'aspect-square' : 'aspect-[3/4]';
 
   const locationSearchResults = useMemo(() => {
     const all = [
@@ -943,6 +1062,67 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           title: '주님께 맡기는 가정',
           content: `두 사람의 앞날을 주님의 손에 맡기며 늘 기쁨으로 섬기는 가정을 이루겠습니다.
 축하와 기도로 함께해 주세요.`,
+        },
+      ],
+    } as const;
+  }, []);
+
+  const noticeSamples = useMemo(() => {
+    return {
+      general: [
+        {
+          title: '예식 안내',
+          content: `예식은 정시에 시작될 예정입니다.
+원활한 진행을 위해 예식 20분 전까지
+도착해 주시면 감사하겠습니다.`,
+        },
+        {
+          title: '참석 안내',
+          content: `바쁘신 와중에도 귀한 걸음으로
+함께해 주셔서 진심으로 감사드립니다.
+따뜻한 축복 부탁드립니다.`,
+        },
+        {
+          title: '식장 안내',
+          content: `예식 후 식사는 같은 건물 내 연회장에서
+진행됩니다. 안내 표지판을 따라
+이동해 주시면 됩니다.`,
+        },
+      ],
+      parking: [
+        {
+          title: '주차 안내',
+          content: `예식장 지하 주차장을 이용하실 수 있으며,
+주차 등록 시 2시간 무료입니다.
+혼잡 시간에는 대중교통 이용을 권장드립니다.`,
+        },
+        {
+          title: '발렛 안내',
+          content: `혼잡한 시간대에는 발렛 서비스가 운영됩니다.
+발렛 비용은 현장에서 별도 결제 부탁드립니다.`,
+        },
+        {
+          title: '대중교통 안내',
+          content: `주말 교통 혼잡이 예상됩니다.
+가급적 지하철 또는 버스 이용을 부탁드립니다.`,
+        },
+      ],
+      meal: [
+        {
+          title: '식사 안내',
+          content: `식사는 예식 종료 후 순차적으로 이용 가능합니다.
+혼잡을 피하기 위해 안내에 따라 입장 부탁드립니다.`,
+        },
+        {
+          title: '답례 안내',
+          content: `마음 전해주신 모든 분들께 감사드립니다.
+정성껏 준비한 식사와 답례를
+편하게 즐겨 주시기 바랍니다.`,
+        },
+        {
+          title: '좌석 안내',
+          content: `동행하신 분들과 같은 테이블 이용이 가능하도록
+현장 안내 스태프가 도와드릴 예정입니다.`,
         },
       ],
     } as const;
@@ -1194,7 +1374,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
     const controller = new AbortController();
 
     setLocationPreviewLoading(true);
-    setLocationPreviewCoords(null);
+    setLocationPreviewCoords(DEFAULT_LOCATION_PREVIEW_COORDS);
 
     const t = window.setTimeout(async () => {
       try {
@@ -1217,7 +1397,8 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           setLocationPreviewCoords({ lat, lon });
         }
       } catch {
-        // ignore (offline / rate-limit 등)
+        // 지오코딩 실패 시에도 경복궁 기본 위치를 유지
+        if (!cancelled) setLocationPreviewCoords(DEFAULT_LOCATION_PREVIEW_COORDS);
       } finally {
         if (!cancelled) setLocationPreviewLoading(false);
       }
@@ -1309,13 +1490,22 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   }, []);
 
   const requiredItems = sidebarItems.filter((i) => i.category === '필수');
-  const orderedOptionalItems = optionalOrder
+  const orderedContentOptionalItems = optionalOrder
     .map((id) => sidebarItems.find((i) => i.id === id))
     .filter(Boolean) as typeof sidebarItems;
-  const orderedItems = [...requiredItems, ...orderedOptionalItems];
+  const otherOptionItems = sidebarItems.filter((i) =>
+    OTHER_OPTION_IDS.includes(i.id as any),
+  );
+  const layoutOrder = [
+    ...baseLayoutOrder,
+    ...orderedContentOptionalItems
+      .map((i) => i.id)
+      .filter((id) => (sectionEnabled[id] ?? false) && id !== "share" && id !== "protect"),
+  ];
+  const orderedItems = [...requiredItems, ...orderedContentOptionalItems, ...otherOptionItems];
 
   const sidebarSortable = useSortable({
-    items: orderedOptionalItems.map((it) => ({ ...it, id: it.id })),
+    items: orderedContentOptionalItems.map((it) => ({ ...it, id: it.id })),
     onReorder: (reordered) => setOptionalOrder(reordered.map((x) => x.id)),
   });
 
@@ -1452,8 +1642,8 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
               : '';
 
         return (
-          <div className="w-full flex flex-col items-center gap-4">
-            <div className="w-full max-w-[320px] aspect-[9/16] rounded-3xl flex flex-col justify-end items-center text-white shadow-none overflow-hidden relative">
+          <div className="w-full flex flex-col items-center gap-0">
+            <div className="w-full max-w-[320px] aspect-[9/16] rounded-none flex flex-col justify-end items-center text-white shadow-none overflow-hidden relative">
               {/* 배경 이미지 레이어 */}
               {transitionEffect === '디졸브' || transitionEffect === '크로스페이드' ? (
                 <>
@@ -1534,7 +1724,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
               <img
                 src="/gukhwa.svg"
                 alt=""
-                className="inline-block w-5 h-5 align-middle mr-1"
+                className="inline-block w-4 h-4 align-middle mr-1"
               />
             )}
             <span className="align-middle">{parent.name || fallback}</span>
@@ -1546,7 +1736,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
               <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30 mb-2">
                 GROOM&apos;S FAMILY
               </p>
-              <p className="text-center">
+              <p className="text-center flex justify-center items-center">
                 {renderParentLabel(groom.father, '신랑 부')} ·{' '}
                 {renderParentLabel(groom.mother, '신랑 모')}
                 의 아들{' '}
@@ -1557,7 +1747,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
               <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30 mb-2">
                 BRIDE&apos;S FAMILY
               </p>
-              <p className="text-center">
+              <p className="text-center flex justify-center items-center">
                 {renderParentLabel(bride.father, '신부 부')} ·{' '}
                 {renderParentLabel(bride.mother, '신부 모')}
                 의 딸{' '}
@@ -1584,12 +1774,9 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
         {
           const addressInput = (data.location.address || '').trim();
           const address = addressInput || '경복궁';
-          const mapType = (((data.location as any).mapType ?? 'photo') as 'photo' | '2d');
           const title = ((data.location as any).title ?? '오시는 길') as string;
           const enc = encodeURIComponent(address);
           const naverWeb = address ? `https://map.naver.com/v5/search/${enc}` : '';
-          const naverMobile = address ? `https://m.map.naver.com/search2/search.naver?query=${enc}` : '';
-          const iframeSrc = mapType === '2d' ? naverMobile : naverWeb;
 
           const transportsRaw = (data.location as any)?.transports;
           const transports: Array<{ mode: string; detail: string }> = Array.isArray(transportsRaw) && transportsRaw.length > 0
@@ -1654,11 +1841,12 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                           onMapReady={() => setNaverPreviewFailed(false)}
                         />
                         {(!process.env.NEXT_PUBLIC_NAVER_MAPS_CLIENT_ID || naverPreviewFailed) && (
-                          <img
-                            alt="지도 미리보기"
-                            className="absolute inset-0 w-full h-full object-cover"
+                          <iframe
+                            title="지도 미리보기"
+                            className="absolute inset-0 w-full h-full border-0"
                             loading="lazy"
-                            src={`https://staticmap.openstreetmap.de/staticmap.php?center=${locationPreviewCoords.lat},${locationPreviewCoords.lon}&zoom=16&size=640x400&markers=${locationPreviewCoords.lat},${locationPreviewCoords.lon},red-pushpin`}
+                            referrerPolicy="no-referrer-when-downgrade"
+                            src={buildOsmEmbedUrl(locationPreviewCoords.lat, locationPreviewCoords.lon)}
                           />
                         )}
                       </>
@@ -1734,6 +1922,317 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
             </div>
           );
         }
+      case 'notice': {
+        const title = (data.notice as any)?.title?.trim() || "안내사항";
+        const content =
+          (data.notice as any)?.content?.trim() ||
+          "마음 편히 오셔서 함께 축복해 주세요.\n예식장 내 주차가 가능하며, 식전 30분 전부터 입장이 가능합니다.";
+        return (
+          <div className="max-w-[320px] mx-auto text-[0.8125em] text-on-surface-20 space-y-3">
+            <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30">NOTICE</p>
+            <p className="text-[0.875em] font-semibold text-on-surface-10">{title}</p>
+            <p className="whitespace-pre-line leading-relaxed">{content}</p>
+          </div>
+        );
+      }
+      case 'gallery': {
+        const images = Array.isArray((data.gallery as any)?.images)
+          ? (data.gallery as any).images.filter((u: unknown) => typeof u === "string" && u.trim().length > 0)
+          : [];
+        const layoutType = ((data.gallery as any)?.layoutType ?? "grid") as "grid" | "slide";
+        const imageRatio = ((data.gallery as any)?.imageRatio ?? "portrait") as "square" | "portrait";
+        const imageGap = (((data.gallery as any)?.imageGap ?? 'middle') as 'none' | 'small' | 'middle' | 'large');
+        const imageGapPx = imageGap === 'none' ? 0 : imageGap === 'small' ? 2 : imageGap === 'large' ? 8 : 4;
+        const gridPreviewRadiusClass = imageGap === 'none' ? 'rounded-none' : 'rounded';
+        const gridPreviewBorderClass = imageGap === 'none' ? 'border-0' : 'border-border';
+        const gridColumns = Number((data.gallery as any)?.gridColumns ?? 3);
+        const useLoadMore = !!((data.gallery as any)?.useLoadMore);
+        const enableDetailView = !!((data.gallery as any)?.enableDetailView);
+        const ratioClass = imageRatio === "square" ? "aspect-square" : "aspect-[3/4]";
+        if (!images.length) {
+          return (
+            <div className="max-w-[320px] mx-auto w-full rounded-xl border border-dashed border-border py-10 text-[0.8125em] text-on-surface-30">
+              갤러리 이미지를 추가해 주세요.
+            </div>
+          );
+        }
+        if (layoutType === "slide") {
+          const currentIndex = Math.min(galleryPreviewIndex, Math.max(0, images.length - 1));
+          const moveToPrev = () => {
+            if (images.length <= 1) return;
+            setGalleryPreviewIndex((prev) => (prev - 1 + images.length) % images.length);
+          };
+          const moveToNext = () => {
+            if (images.length <= 1) return;
+            setGalleryPreviewIndex((prev) => (prev + 1) % images.length);
+          };
+          return (
+            <div className="max-w-full mx-auto w-full space-y-2">
+              <div className="relative">
+                <div
+                  className={`w-full rounded overflow-hidden border border-border ${ratioClass}`}
+                  onTouchStart={(e) => {
+                    gallerySwipeStartXRef.current = e.changedTouches[0]?.clientX ?? null;
+                  }}
+                  onTouchEnd={(e) => {
+                    const startX = gallerySwipeStartXRef.current;
+                    const endX = e.changedTouches[0]?.clientX;
+                    gallerySwipeStartXRef.current = null;
+                    if (startX === null || typeof endX !== 'number') return;
+                    const deltaX = endX - startX;
+                    if (Math.abs(deltaX) < 30) return;
+                    if (deltaX < 0) {
+                      moveToNext();
+                      return;
+                    }
+                    moveToPrev();
+                  }}
+                >
+                  <img
+                    src={images[currentIndex]}
+                    alt={`갤러리 이미지 ${currentIndex + 1}`}
+                    className={`w-full h-full object-cover ${enableDetailView ? 'cursor-zoom-in' : ''}`}
+                    onClick={() => {
+                      if (!enableDetailView) return;
+                      setGalleryDetailIndex(currentIndex);
+                      setGalleryDetailOpen(true);
+                    }}
+                  />
+                </div>
+                <div className="absolute right-2 bottom-2 px-2 py-1 bg-black/50 rounded-[999px] inline-flex justify-start items-center gap-0.5">
+                  <div className="justify-start text-white text-xs font-normal">{currentIndex + 1}</div>
+                  <div className="opacity-50 justify-start text-white text-xs font-normal">/</div>
+                  <div className="opacity-50 justify-start text-white text-xs font-normal">{images.length}</div>
+                </div>
+              </div>
+              <div className="inline-flex justify-start items-center gap-0">
+                {images.map((_, idx) => (
+                  <button
+                    key={`gallery-dot-${idx}`}
+                    type="button"
+                    onClick={() => setGalleryPreviewIndex(idx)}
+                    className={`w-5 h-0.5 transition-colors ${idx === currentIndex ? 'bg-[color:var(--key)]' : 'bg-zinc-300'}`}
+                    aria-label={`갤러리 ${idx + 1}번 이미지`}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        }
+        const totalRows = Math.ceil(images.length / gridColumns);
+        const shouldShowLoadMoreButton = useLoadMore && totalRows > 3;
+        const visibleRows = useLoadMore ? Math.min(galleryGridVisibleRows, totalRows) : totalRows;
+        const visibleCount = Math.min(images.length, visibleRows * gridColumns);
+        return (
+          <div className="max-w-full mx-auto w-full space-y-2">
+            <div
+              className={`w-full grid ${gridColumns === 2 ? "grid-cols-2" : gridColumns === 4 ? "grid-cols-4" : "grid-cols-3"}`}
+              style={{ gap: `${imageGapPx}px` }}
+            >
+              {images.slice(0, visibleCount).map((src: string, idx: number) => (
+                <div key={`${src}-${idx}`} className={`${gridPreviewRadiusClass} overflow-hidden border ${gridPreviewBorderClass} ${ratioClass}`}>
+                  <img
+                    src={src}
+                    alt={`갤러리 이미지 ${idx + 1}`}
+                    className={`w-full h-full object-cover ${enableDetailView ? 'cursor-zoom-in' : ''}`}
+                    onClick={() => {
+                      if (!enableDetailView) return;
+                      setGalleryDetailIndex(idx);
+                      setGalleryDetailOpen(true);
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            {shouldShowLoadMoreButton && visibleRows < totalRows && (
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
+                  onClick={() => setGalleryGridVisibleRows((prev) => Math.min(prev + 3, totalRows))}
+                >
+                  더보기
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+      }
+      case 'account': {
+        const title = data.accounts?.title || "마음 전하실 곳";
+        const content = data.accounts?.content || "";
+        const list = Array.isArray(data.accounts?.list) ? data.accounts.list : [];
+        const visibleList = list.filter((acc) => acc.isExpanded);
+        return (
+          <div className="max-w-full mx-auto w-full space-y-3 text-[0.8125em] text-on-surface-20">
+            <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30">ACCOUNT</p>
+            <p className="text-[0.875em] font-semibold text-on-surface-10">{title}</p>
+            {content && <p className="whitespace-pre-line leading-relaxed">{content}</p>}
+            <div className="space-y-2">
+              {visibleList.length === 0 && (
+                <div className="rounded-lg border border-dashed border-border py-4 text-on-surface-30">
+                  노출할 계좌정보가 없습니다.
+                </div>
+              )}
+              {visibleList.map((acc) => (
+                <div key={acc.id} className="rounded-lg border border-border bg-white px-3 py-3 text-left">
+                  <div className="text-[0.75em] text-on-surface-30">{acc.groupName || "그룹명"}</div>
+                  <div className="font-semibold text-on-surface-10">{acc.bank || "은행"} {acc.accountNumber || "계좌번호"}</div>
+                  <div className="text-on-surface-30">{acc.holder || "예금주"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+      case 'guestbook': {
+        const title = ((data.guestbook as any)?.title ?? "방명록") as string;
+        const description = ((data.guestbook as any)?.description ?? "축하 인사를 남겨주세요.") as string;
+        const hasPassword = Boolean(data.guestbook?.password?.trim());
+        const allowAnonymous = !!(data.guestbook as any)?.allowAnonymous;
+        const entries = Array.isArray((data.guestbook as any)?.entries) ? (data.guestbook as any).entries : [];
+        const orderedEntries = entries;
+        const perPage = 5;
+        const totalPages = Math.max(1, Math.ceil(orderedEntries.length / perPage));
+        const currentPage = Math.min(guestbookPreviewPage, totalPages);
+        const pagedEntries = orderedEntries.slice((currentPage - 1) * perPage, currentPage * perPage);
+        const pageStart = Math.max(1, currentPage - 2);
+        const pageEnd = Math.min(totalPages, pageStart + 4);
+        const pageNumbers = Array.from({ length: pageEnd - pageStart + 1 }, (_, i) => pageStart + i);
+        return (
+          <div className="max-w-full mx-auto w-full space-y-3 text-[0.8125em] text-on-surface-20 text-left">
+            <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30">GUESTBOOK</p>
+            <p className="text-[0.875em] font-semibold text-on-surface-10">{title}</p>
+            <p className="whitespace-pre-line leading-relaxed">{description}</p>
+            <div className="space-y-2">
+              {orderedEntries.length === 0 && (
+                <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-on-surface-30">
+                  아직 등록된 축하 메시지가 없습니다.
+                </div>
+              )}
+              {pagedEntries.map((entry: any) => (
+                <div key={entry.id} className="rounded-2xl border border-border bg-white px-4 py-4 space-y-1.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-on-surface-10">
+                      {entry.name || (allowAnonymous ? "익명" : "작성자")}
+                    </span>
+                    <span className="text-[0.75em] text-on-surface-30">{entry.createdAt}</span>
+                  </div>
+                  <p className="whitespace-pre-line leading-relaxed text-on-surface-20">
+                    {entry.isSecret ? "🔒 비밀글입니다." : entry.message}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {orderedEntries.length > perPage && (
+              <div className="pt-2 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-[15px]">
+                  {pageNumbers.map((num) => (
+                    <button
+                      key={`guestbook-page-${num}`}
+                      type="button"
+                      onClick={() => setGuestbookPreviewPage(num)}
+                      className={`${num === currentPage ? 'text-on-surface-10 font-semibold' : 'text-on-surface-30'}`}
+                    >
+                      {num}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-lg px-4 h-10 text-[13px]"
+                >
+                  축하메시지 남기기
+                </Button>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 text-[0.75em] text-on-surface-30">
+              {hasPassword && <span>비밀번호 보호</span>}
+            </div>
+          </div>
+        );
+      }
+      case 'youtube': {
+        const title = ((data.youtube as any)?.title ?? "영상으로 전하는 마음") as string;
+        const videoId = getYoutubeVideoId(data.youtube?.url ?? "");
+        const isLoop = !!(data.youtube as any)?.isLoop;
+        const embedUrl = videoId
+          ? `https://www.youtube.com/embed/${videoId}${isLoop ? `?loop=1&playlist=${videoId}` : ""}`
+          : null;
+        return (
+          <div className="max-w-full mx-auto w-full space-y-3 text-[0.8125em] text-on-surface-20">
+            <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30">YOUTUBE</p>
+            <p className="text-[0.875em] font-semibold text-on-surface-10">{title}</p>
+            {embedUrl ? (
+              <div className="w-full aspect-video rounded-xl overflow-hidden border border-border bg-black">
+                <iframe
+                  src={embedUrl}
+                  title="유튜브 영상 미리보기"
+                  className="w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                />
+              </div>
+            ) : (
+              <div className="w-full h-28 rounded-xl border border-dashed border-border flex items-center justify-center text-on-surface-30">
+                유튜브 링크를 입력해 주세요.
+              </div>
+            )}
+          </div>
+        );
+      }
+      case 'share': {
+        const title = data.share?.title || "모바일 청첩장";
+        const description = data.share?.description || "소중한 날에 초대합니다.";
+        const useThumbnail = (data.share as any)?.useThumbnail ?? true;
+        const thumb = data.share?.thumbnail?.trim() || "";
+        return (
+          <div className="max-w-full mx-auto w-full space-y-3 text-[0.8125em] text-on-surface-20">
+            <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30">SHARE</p>
+            <div className="rounded-xl border border-border overflow-hidden bg-white text-left">
+              {useThumbnail && (
+                <div className="h-36 w-full bg-[color:var(--surface-20)]">
+                  {thumb ? (
+                    <img src={thumb} alt="공유 썸네일" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-on-surface-30">썸네일 미리보기</div>
+                  )}
+                </div>
+              )}
+              <div className="px-3 py-3 space-y-1">
+                <p className="font-semibold text-on-surface-10 line-clamp-1">{title}</p>
+                <p className="text-on-surface-30 line-clamp-2">{description}</p>
+              </div>
+            </div>
+            <p className="text-[0.75em] text-on-surface-30">공유 시 썸네일/제목/설명으로 노출됩니다.</p>
+          </div>
+        );
+      }
+      case 'protect': {
+        const items = [
+          { label: "캡처 방지", enabled: !!data.protect?.preventCapture },
+          { label: "줌 방지", enabled: !!data.protect?.preventZoom },
+          { label: "다운로드 방지", enabled: !!data.protect?.preventDownload },
+        ];
+        return (
+          <div className="max-w-full mx-auto w-full space-y-3 text-[0.8125em] text-on-surface-20">
+            <p className="text-[0.75em] font-semibold tracking-[0.2em] text-on-surface-30">PROTECT</p>
+            <div className="rounded-xl border border-border bg-white text-left px-3 py-3 space-y-2">
+              {items.map((it) => (
+                <div key={it.label} className="flex items-center justify-between">
+                  <span>{it.label}</span>
+                  <span className={it.enabled ? "text-[color:var(--key)] font-semibold" : "text-on-surface-30"}>
+                    {it.enabled ? "ON" : "OFF"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
       default:
         return null;
     }
@@ -1746,7 +2245,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
       <header className="w-full flex-shrink-0 bg-white border-b border-border z-30">
         <div className="h-16 flex items-center justify-between px-6">
           <div className="flex items-center gap-2">
-            <span className="text-xl font-extrabold tracking-tighter text-on-surface-10">담음</span>
+            <span className="text-xl font-extrabold tracking-tighter text-on-surface-10">온서로</span>
           </div>
           <button className="bg-[color:var(--key)] text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-[color:var(--key-dark)] transition-colors shadow-none">
             저장하기
@@ -1779,7 +2278,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           
           <div className="w-full text-center mb-2"><span className="text-[12px] font-bold text-on-surface-30">선택 사항</span></div>
           <div className="flex flex-col gap-y-2 pb-10 w-full items-center">
-            {orderedOptionalItems.map((item) => {
+            {orderedContentOptionalItems.map((item) => {
               const isActive = activeSection === item.id;
               const isDisabled = item.hasSwitch && !(sectionEnabled[item.id] ?? false);
               const { handleProps, wrapperProps, isDragging } = sidebarSortable.getItemProps(item.id);
@@ -1801,6 +2300,29 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
               );
             })}
           </div>
+
+          <div className="w-full border-t border-border mb-4"></div>
+          <div className="w-full text-center mb-2"><span className="text-[12px] font-bold text-on-surface-30">기타옵션</span></div>
+          <div className="flex flex-col gap-y-2 pb-10 w-full items-center">
+            {otherOptionItems.map((item) => {
+              const isActive = activeSection === item.id;
+              const isDisabled = item.hasSwitch && !(sectionEnabled[item.id] ?? false);
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => scrollToSection(item.id)}
+                  className={`flex flex-col items-center justify-center gap-y-1 w-[80px] h-[64px] rounded-lg cursor-pointer transition-colors shadow-none ${
+                    isDisabled
+                      ? 'opacity-50 text-on-surface-30 hover:bg-slate-100'
+                      : `${isActive ? 'bg-slate-100' : 'text-on-surface-20 hover:bg-slate-100'}`
+                  }`}
+                >
+                  <item.icon className={`w-6 h-6 ${isDisabled ? 'text-on-surface-30' : isActive ? 'text-[color:var(--key)]' : 'text-on-surface-30'}`} strokeWidth={1.5} />
+                  <span className={`text-[12px] font-normal ${isDisabled ? 'text-on-surface-30' : isActive ? 'text-[color:var(--key)]' : 'text-on-surface-20'}`}>{item.label}</span>
+                </div>
+              );
+            })}
+          </div>
         </aside>
 
         {/* 2. 중앙 에디터 패널 */}
@@ -1813,14 +2335,22 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
             <div className="p-4 flex-1 flex flex-col gap-4 bg-[color:var(--surface-10)] [&>div]:p-0">
               {orderedItems.map((item, idx) => {
                 const isInitiallyExpanded = true;
-                const isOptional = item.category === '선택';
-                const isFirstOptional = isOptional && !orderedItems[idx - 1] || (isOptional && orderedItems[idx - 1]?.category !== '선택');
-                const editorSortProps = isOptional ? sidebarSortable.getItemProps(item.id) : null;
+                const isContentOptional = item.category === '선택' && !OTHER_OPTION_IDS.includes(item.id as any);
+                const isOtherOption = OTHER_OPTION_IDS.includes(item.id as any);
+                const prevItem = orderedItems[idx - 1];
+                const prevIsContentOptional = !!prevItem && prevItem.category === '선택' && !OTHER_OPTION_IDS.includes(prevItem.id as any);
+                const prevIsOtherOption = !!prevItem && OTHER_OPTION_IDS.includes(prevItem.id as any);
+                const isFirstContentOptional = isContentOptional && !prevIsContentOptional;
+                const isFirstOtherOption = isOtherOption && !prevIsOtherOption;
+                const editorSortProps = isContentOptional ? sidebarSortable.getItemProps(item.id) : null;
                 const isDragging = editorSortProps?.isDragging ?? false;
                 return (
                   <React.Fragment key={item.id}>
-                {isFirstOptional && (
+                {isFirstContentOptional && (
                   <div className="text-[13px] font-bold text-on-surface-30 pt-2 mt-10">선택사항</div>
+                )}
+                {isFirstOtherOption && (
+                  <div className="text-[13px] font-bold text-on-surface-30 pt-2 mt-10">기타옵션</div>
                 )}
                 <div
                   id={item.id}
@@ -1850,7 +2380,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                         />
                       )}
                     </div>
-                    {isOptional && editorSortProps && (
+                    {isContentOptional && editorSortProps && (
                       <button
                         type="button"
                         {...editorSortProps.handleProps}
@@ -2495,7 +3025,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                                     <Button
                                       type="button"
                                       variant="outline"
-                                      className="h-8 px-3 rounded-lg border-[color:var(--border-30)] bg-white text-on-surface-20 hover:bg-slate-50 hover:text-on-surface-10"
+                                      className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
                                       onClick={() => fileInputRef.current?.click()}
                                     >
                                       파일 선택
@@ -2812,7 +3342,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                               <Button
                                 type="button"
                                 variant="outline"
-                                className="h-8 px-3 rounded-lg border-[color:var(--border-30)] bg-white text-on-surface-20 hover:bg-slate-50 hover:text-on-surface-10"
+                                className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
                                 onClick={() => {
                                   setGreetingSampleTab('general');
                                   setGreetingSelectedSample(null);
@@ -2982,11 +3512,9 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                               <div className="flex flex-1 gap-2">
                                 <Input
                                   value={data.location.address}
-                                  onChange={() => {}}
-                                  readOnly
-                                  disabled
+                                  onChange={(e) => updateData('location.address', e.target.value)}
                                   className="shadow-none flex-1"
-                                  placeholder="주소를 검색하여 추가해 주세요"
+                                  placeholder="주소를 입력하거나 검색하여 추가해 주세요"
                                 />
                                 <Button
                                   type="button"
@@ -3000,21 +3528,6 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                                 >
                                   검색
                                 </Button>
-                              </div>
-                            </FormItem>
-
-                            <FormItem label="지도타입">
-                              <div className="flex flex-wrap gap-2 w-full">
-                                <OptionChip
-                                  label="실사"
-                                  active={(((data.location as any).mapType ?? 'photo') === 'photo')}
-                                  onClick={() => updateData('location.mapType', 'photo')}
-                                />
-                                <OptionChip
-                                  label="2D"
-                                  active={(((data.location as any).mapType ?? 'photo') === '2d')}
-                                  onClick={() => updateData('location.mapType', '2d')}
-                                />
                               </div>
                             </FormItem>
 
@@ -3365,6 +3878,22 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                       {/* 갤러리 섹션 */}
                       {item.id === 'gallery' && (
                         <>
+                          <FormItem label="사진 비율">
+                            <div className="flex flex-wrap gap-2">
+                              {([
+                                { value: 'square', label: '정사각형' },
+                                { value: 'portrait', label: '직사각형' },
+                              ] as const).map((opt) => (
+                                <OptionChip
+                                  key={opt.value}
+                                  label={opt.label}
+                                  active={(((data.gallery as any).imageRatio ?? 'portrait') === opt.value)}
+                                  onClick={() => updateData('gallery.imageRatio', opt.value)}
+                                />
+                              ))}
+                            </div>
+                          </FormItem>
+
                           <FormItem label="갤러리 타입">
                             <div className="flex flex-wrap gap-2">
                               {([
@@ -3382,35 +3911,59 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                           </FormItem>
 
                           {(((data.gallery as any).layoutType ?? 'grid') === 'grid') && (
-                            <FormItem label="배치 방법">
-                              <div className="flex flex-wrap gap-2">
-                                {([2, 3, 4] as const).map((col) => (
-                                  <OptionChip
-                                    key={col}
-                                    label={`${col}단 그리드`}
-                                    active={Number(((data.gallery as any).gridColumns ?? 4)) === col}
-                                    onClick={() => updateData('gallery.gridColumns', col)}
-                                  />
-                                ))}
-                              </div>
-                            </FormItem>
+                            <>
+                              <FormItem label="배치 방법">
+                                <div className="flex flex-wrap gap-2">
+                                  {([2, 3, 4] as const).map((col) => (
+                                    <OptionChip
+                                      key={col}
+                                      label={`${col}단 그리드`}
+                                      active={Number(((data.gallery as any).gridColumns ?? 4)) === col}
+                                      onClick={() => updateData('gallery.gridColumns', col)}
+                                    />
+                                  ))}
+                                </div>
+                              </FormItem>
+                              <FormItem label="사진 간격">
+                                <div className="flex flex-wrap gap-2">
+                                  {([
+                                    { value: 'none', label: '없음' },
+                                    { value: 'small', label: '작게' },
+                                    { value: 'middle', label: '중간' },
+                                    { value: 'large', label: '많이' },
+                                  ] as const).map((opt) => (
+                                    <OptionChip
+                                      key={opt.value}
+                                      label={opt.label}
+                                      active={(((data.gallery as any).imageGap ?? 'middle') === opt.value)}
+                                      onClick={() => updateData('gallery.imageGap', opt.value)}
+                                    />
+                                  ))}
+                                </div>
+                              </FormItem>
+                              <FormItem label="옵션">
+                                <div className="flex-1 flex flex-col gap-4">
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                                    onClick={() => updateData('gallery.useLoadMore', !((data.gallery as any)?.useLoadMore))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        updateData('gallery.useLoadMore', !((data.gallery as any)?.useLoadMore));
+                                      }
+                                    }}
+                                  >
+                                    <CircleCheckbox
+                                      checked={!!(data.gallery as any)?.useLoadMore}
+                                      onChange={(e) => updateData('gallery.useLoadMore', e.target.checked)}
+                                    />
+                                    3줄 이상 더보기 사용
+                                  </span>
+                                </div>
+                              </FormItem>
+                            </>
                           )}
-
-                          <FormItem label="사진 비율">
-                            <div className="flex flex-wrap gap-2">
-                              {([
-                                { value: 'square', label: '정사각형' },
-                                { value: 'portrait', label: '직사각형' },
-                              ] as const).map((opt) => (
-                                <OptionChip
-                                  key={opt.value}
-                                  label={opt.label}
-                                  active={(((data.gallery as any).imageRatio ?? 'portrait') === opt.value)}
-                                  onClick={() => updateData('gallery.imageRatio', opt.value)}
-                                />
-                              ))}
-                            </div>
-                          </FormItem>
 
                           <FormItem label={`사진 ${Array.isArray((data.gallery as any).images) ? (data.gallery as any).images.length : 0}/50`}>
                             <div className="flex-1 flex flex-col gap-2 w-full">
@@ -3426,11 +3979,468 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                               </div>
                             </div>
                           </FormItem>
+                          <FormItem label="옵션">
+                            <div className="flex-1 flex flex-col gap-4">
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                                onClick={() => updateData('gallery.enableDetailView', !((data.gallery as any)?.enableDetailView))}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    updateData('gallery.enableDetailView', !((data.gallery as any)?.enableDetailView));
+                                  }
+                                }}
+                              >
+                                <CircleCheckbox
+                                  checked={!!(data.gallery as any)?.enableDetailView}
+                                  onChange={(e) => updateData('gallery.enableDetailView', e.target.checked)}
+                                />
+                                상세보기 허용
+                              </span>
+                            </div>
+                          </FormItem>
+                        </>
+                      )}
+
+                      {/* 안내사항 섹션 */}
+                      {item.id === 'notice' && (
+                        <>
+                          <FormItem label="제목">
+                            <Input
+                              value={(data.notice as any)?.title ?? ""}
+                              onChange={(e) => updateData('notice.title', e.target.value)}
+                              placeholder="안내사항"
+                              className="shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <FormItem label="내용">
+                            <Textarea
+                              rows={4}
+                              value={(data.notice as any)?.content ?? ""}
+                              onChange={(e) => updateData('notice.content', e.target.value)}
+                              placeholder="하객 안내 문구를 입력해 주세요."
+                              className="resize-none shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
+                              onClick={async () => {
+                                const linkToCopy = ((data.share as any)?.link ?? '').trim() || window.location.href;
+                                try {
+                                  await navigator.clipboard.writeText(linkToCopy);
+                                } catch {
+                                  // ignore clipboard permission failures
+                                }
+                              }}
+                            >
+                              링크복사
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
+                              onClick={() => {
+                                setNoticeSampleTab('general');
+                                setNoticeSelectedSample(null);
+                                setNoticeSampleOpen(true);
+                              }}
+                            >
+                              샘플보기
+                            </Button>
+                          </div>
+
+                          {noticeSampleOpen && createPortal(
+                            <div
+                              className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
+                              onClick={() => setNoticeSampleOpen(false)}
+                            >
+                              <div
+                                className="w-full max-w-md rounded-2xl bg-white border border-[color:var(--border-10)] p-6 flex flex-col gap-5 h-[min(800px,calc(100vh-48px))] overflow-hidden"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <h3 className="text-[15px] font-semibold text-on-surface-10">샘플 문구</h3>
+                                  <button
+                                    type="button"
+                                    onClick={() => setNoticeSampleOpen(false)}
+                                    className="p-1 rounded-full hover:bg-slate-100 text-on-surface-30 hover:text-on-surface-10"
+                                    aria-label="닫기"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+
+                                <div className="relative">
+                                  <div className="grid grid-cols-3 border-b border-[color:var(--border-10)]">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNoticeSampleTab('general');
+                                        setNoticeSelectedSample(null);
+                                      }}
+                                      className={[
+                                        'h-10 flex items-center justify-center text-[16px] font-medium transition-colors',
+                                        noticeSampleTab === 'general'
+                                          ? 'text-on-surface-10'
+                                          : 'text-[color:var(--on-surface-disabled)] hover:text-on-surface-30',
+                                      ].join(' ')}
+                                    >
+                                      일반
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNoticeSampleTab('parking');
+                                        setNoticeSelectedSample(null);
+                                      }}
+                                      className={[
+                                        'h-10 flex items-center justify-center text-[16px] font-medium transition-colors',
+                                        noticeSampleTab === 'parking'
+                                          ? 'text-on-surface-10'
+                                          : 'text-[color:var(--on-surface-disabled)] hover:text-on-surface-30',
+                                      ].join(' ')}
+                                    >
+                                      주차/교통
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNoticeSampleTab('meal');
+                                        setNoticeSelectedSample(null);
+                                      }}
+                                      className={[
+                                        'h-10 flex items-center justify-center text-[16px] font-medium transition-colors',
+                                        noticeSampleTab === 'meal'
+                                          ? 'text-on-surface-10'
+                                          : 'text-[color:var(--on-surface-disabled)] hover:text-on-surface-30',
+                                      ].join(' ')}
+                                    >
+                                      식사/안내
+                                    </button>
+                                  </div>
+                                  <div
+                                    className={[
+                                      'absolute bottom-0 left-0 h-[2px] w-1/3 bg-black transition-transform duration-200',
+                                      noticeSampleTab === 'general'
+                                        ? 'translate-x-0'
+                                        : noticeSampleTab === 'parking'
+                                          ? 'translate-x-full'
+                                          : 'translate-x-[200%]',
+                                    ].join(' ')}
+                                  />
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto no-scrollbar">
+                                  <div className="flex flex-col gap-3">
+                                    {noticeSamples[noticeSampleTab].map((sample) => (
+                                      <div
+                                        key={`${sample.title}-${sample.content.slice(0, 20)}`}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => setNoticeSelectedSample(sample)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') setNoticeSelectedSample(sample);
+                                        }}
+                                        className={[
+                                          'rounded-lg border bg-white px-4 py-5 cursor-pointer transition-colors outline-none',
+                                          noticeSelectedSample?.content === sample.content && noticeSelectedSample?.title === sample.title
+                                            ? 'border-black'
+                                            : 'border-[color:var(--border-10)] hover:border-[color:var(--border-20)]',
+                                        ].join(' ')}
+                                      >
+                                        <div className="text-[13px] font-semibold text-on-surface-10 text-center mb-2">
+                                          {sample.title}
+                                        </div>
+                                        <div className="text-[14px] leading-relaxed text-on-surface-10 text-center whitespace-pre-line">
+                                          {sample.content}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="pt-0 flex justify-end gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="w-fit h-10 px-5 rounded-lg text-[14px] font-semibold border-[color:var(--border-30)] bg-white text-on-surface-20 hover:bg-slate-50 hover:text-on-surface-10"
+                                    onClick={() => {
+                                      setNoticeSelectedSample(null);
+                                      setNoticeSampleOpen(false);
+                                    }}
+                                  >
+                                    취소
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    className="w-fit h-10 px-5 rounded-lg text-[14px] font-semibold"
+                                    disabled={!noticeSelectedSample}
+                                    onClick={() => {
+                                      if (!noticeSelectedSample) return;
+                                      updateData('notice.title', noticeSelectedSample.title);
+                                      updateData('notice.content', noticeSelectedSample.content);
+                                      setNoticeSampleOpen(false);
+                                    }}
+                                  >
+                                    적용하기
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>,
+                            document.body
+                          )}
+                        </>
+                      )}
+
+                      {/* 방명록 섹션 */}
+                      {item.id === 'guestbook' && (
+                        <>
+                          <FormItem label="제목">
+                            <Input
+                              value={(data.guestbook as any)?.title ?? ""}
+                              onChange={(e) => updateData('guestbook.title', e.target.value)}
+                              placeholder="방명록"
+                              className="shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <FormItem label="설명">
+                            <Textarea
+                              rows={3}
+                              value={(data.guestbook as any)?.description ?? ""}
+                              onChange={(e) => updateData('guestbook.description', e.target.value)}
+                              placeholder="축하 인사를 남겨주세요."
+                              className="resize-none shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <FormItem label="비밀번호">
+                            <div className="flex-1 flex flex-col gap-2">
+                              <Input
+                                type="password"
+                                value={data.guestbook?.password ?? ""}
+                                onChange={(e) => updateData('guestbook.password', e.target.value)}
+                                placeholder="선택 입력 (방명록 보호)"
+                                className="shadow-none flex-1"
+                              />
+                              <div className="text-[12px] text-on-surface-30">
+                                관리자 비밀번호를 사용하여 방명록 글을 강제로 삭제할 수 있습니다.
+                              </div>
+                            </div>
+                          </FormItem>
+                          <FormItem label="운영 옵션">
+                            <div className="flex-1 flex flex-col gap-2 text-[13px] text-on-surface-20">
+                              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                <CircleCheckbox
+                                  checked={!!(data.guestbook as any)?.allowAnonymous}
+                                  onChange={(e) => updateData('guestbook.allowAnonymous', e.target.checked)}
+                                />
+                                익명 작성 허용
+                              </label>
+                            </div>
+                          </FormItem>
+                        </>
+                      )}
+
+                      {/* 유튜브 섹션 */}
+                      {item.id === 'youtube' && (
+                        <>
+                          <FormItem label="제목">
+                            <Input
+                              value={(data.youtube as any)?.title ?? ""}
+                              onChange={(e) => updateData('youtube.title', e.target.value)}
+                              placeholder="영상으로 전하는 마음"
+                              className="shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <FormItem label="유튜브 링크">
+                            <Input
+                              value={data.youtube?.url ?? ""}
+                              onChange={(e) => updateData('youtube.url', e.target.value)}
+                              placeholder="https://youtu.be/... 또는 https://www.youtube.com/watch?v=..."
+                              className="shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <FormItem label="옵션">
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                              onClick={() => updateData('youtube.isLoop', !((data.youtube as any)?.isLoop))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  updateData('youtube.isLoop', !((data.youtube as any)?.isLoop));
+                                }
+                              }}
+                            >
+                              <CircleCheckbox
+                                checked={!!(data.youtube as any)?.isLoop}
+                                onChange={(e) => updateData('youtube.isLoop', e.target.checked)}
+                              />
+                              반복 재생
+                            </span>
+                          </FormItem>
+                        </>
+                      )}
+
+                      {/* 공유 섹션 */}
+                      {item.id === 'share' && (
+                        <>
+                          <FormItem label="옵션">
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                              onClick={() => updateData('share.useThumbnail', !((data.share as any)?.useThumbnail ?? true))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  updateData('share.useThumbnail', !((data.share as any)?.useThumbnail ?? true));
+                                }
+                              }}
+                            >
+                              <CircleCheckbox
+                                checked={!!((data.share as any)?.useThumbnail ?? true)}
+                                onChange={(e) => updateData('share.useThumbnail', e.target.checked)}
+                              />
+                              썸네일 사용하기
+                            </span>
+                          </FormItem>
+                          {((data.share as any)?.useThumbnail ?? true) && (
+                            <FormItem label="썸네일">
+                              <div className="flex-1 flex flex-col gap-2">
+                                <div className="w-full h-[120px] flex items-center gap-2">
+                                  <div className="h-full aspect-video rounded-lg border border-border bg-[color:var(--surface-20)] overflow-hidden">
+                                    {data.share?.thumbnail ? (
+                                      <img
+                                        src={data.share.thumbnail}
+                                        alt="공유 썸네일 미리보기"
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[12px] text-on-surface-30">
+                                        썸네일 이미지가 없습니다.
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="h-full flex flex-col justify-start gap-2">
+                                    <label className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50">
+                                      이미지 선택
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (!file) return;
+                                          const url = URL.createObjectURL(file);
+                                          updateData('share.thumbnail', url);
+                                          e.currentTarget.value = '';
+                                        }}
+                                      />
+                                    </label>
+                                    {data.share?.thumbnail && (
+                                      <button
+                                        type="button"
+                                        className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-30 hover:text-on-surface-10 hover:bg-slate-50"
+                                        onClick={() => updateData('share.thumbnail', '')}
+                                      >
+                                        삭제
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </FormItem>
+                          )}
+                          <FormItem label="공유 제목">
+                            <Input
+                              value={data.share?.title ?? ""}
+                              onChange={(e) => updateData('share.title', e.target.value)}
+                              placeholder="공유 시 노출될 제목"
+                              className="shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <FormItem label="공유 설명">
+                            <Textarea
+                              rows={3}
+                              value={data.share?.description ?? ""}
+                              onChange={(e) => updateData('share.description', e.target.value)}
+                              placeholder="공유 시 노출될 설명"
+                              className="resize-none shadow-none flex-1"
+                            />
+                          </FormItem>
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
+                              onClick={() => setSharePreviewOpen(true)}
+                            >
+                              미리보기
+                            </Button>
+                          </div>
+                        </>
+                      )}
+
+                      {/* 보호 섹션 */}
+                      {item.id === 'protect' && (
+                        <>
+                          <FormItem label="옵션">
+                            <div className="flex-1 flex flex-col gap-4">
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                                onClick={() => updateData('protect.preventCapture', !data.protect?.preventCapture)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') updateData('protect.preventCapture', !data.protect?.preventCapture);
+                                }}
+                              >
+                                <CircleCheckbox
+                                  checked={!!data.protect?.preventCapture}
+                                  onChange={(e) => updateData('protect.preventCapture', e.target.checked)}
+                                />
+                                캡처 방지
+                              </span>
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                                onClick={() => updateData('protect.preventZoom', !data.protect?.preventZoom)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') updateData('protect.preventZoom', !data.protect?.preventZoom);
+                                }}
+                              >
+                                <CircleCheckbox
+                                  checked={!!data.protect?.preventZoom}
+                                  onChange={(e) => updateData('protect.preventZoom', e.target.checked)}
+                                />
+                                줌 방지
+                              </span>
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                                onClick={() => updateData('protect.preventDownload', !data.protect?.preventDownload)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') updateData('protect.preventDownload', !data.protect?.preventDownload);
+                                }}
+                              >
+                                <CircleCheckbox
+                                  checked={!!data.protect?.preventDownload}
+                                  onChange={(e) => updateData('protect.preventDownload', e.target.checked)}
+                                />
+                                다운로드 방지
+                              </span>
+                            </div>
+                          </FormItem>
                         </>
                       )}
 
                       {/* 아직 구체화되지 않은 나머지 섹션들의 플레이스홀더 */}
-                      {!['theme', 'bgm', 'main', 'hosts', 'eventInfo', 'greeting', 'account', 'location', 'gallery'].includes(item.id) && (
+                      {!['theme', 'bgm', 'main', 'hosts', 'eventInfo', 'greeting', 'account', 'location', 'gallery', 'notice', 'guestbook', 'youtube', 'share', 'protect'].includes(item.id) && (
                         <div className="h-20 flex items-center justify-center text-on-surface-30 text-sm bg-slate-50 rounded-lg border border-dashed border-border">
                           {item.label} 세부 입력 폼이 조립될 영역입니다.
                         </div>
@@ -3483,7 +4493,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           {/* 바깥 컨테이너는 고정, 내부 프레임만 스크롤 */}
           <div className="flex-1 min-h-0 flex justify-center w-full max-w-[400px] min-h-full bg-transparent items-stretch shadow-none">
             <div
-              className="w-full border border-border rounded-lg bg-white flex flex-col items-stretch text-center overflow-hidden"
+              className="w-full border border-border rounded-lg bg-white flex flex-col items-stretch text-center overflow-hidden relative"
               style={{
                 // 향후 theme.bgColor / theme.fontFamily를 전역 테마로 사용
                 backgroundColor: data.style.bgColor,
@@ -3491,16 +4501,76 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                 fontSize: `${fontScaleToPercent((data.theme as any).fontScale)}%`,
               }}
             >
-              <div className="flex-1 overflow-y-auto no-scrollbar">
+              <div ref={previewScrollRef} className="flex-1 overflow-y-auto no-scrollbar">
                 {layoutOrder.map((sectionId) => (
                   <div
                     key={sectionId}
-                    className="py-16 px-5 flex flex-col items-center text-center"
+                    data-preview-section-id={sectionId}
+                    className={`${sectionId === 'main'
+                      ? "w-full flex flex-col items-center text-center"
+                      : "w-full py-6 px-6 flex flex-col items-center text-center"
+                      } ${data.theme.scrollEffect
+                        ? (previewVisibleSections[sectionId]
+                          ? 'opacity-100 translate-y-0 duration-500 ease-out'
+                          : 'opacity-0 translate-y-3 duration-500 ease-out')
+                        : 'opacity-100 translate-y-0'
+                      } transition-[opacity,transform]`}
                   >
                     {renderPreviewSection(sectionId)}
                   </div>
                 ))}
               </div>
+              {galleryDetailOpen && galleryDetailImages.length > 0 && (
+                <div
+                  className="absolute inset-0 z-30 bg-black/70 flex items-center justify-center p-6"
+                  onClick={() => setGalleryDetailOpen(false)}
+                >
+                  <div
+                    className="relative w-full max-w-none"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className={`w-full ${galleryDetailRatioClass} rounded-xl border-2 border-white/90 overflow-hidden`}>
+                      <img
+                        src={galleryDetailImages[galleryDetailIndex]}
+                        alt={`갤러리 상세 이미지 ${galleryDetailIndex + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    {galleryDetailImages.length > 1 && (
+                      <>
+                        <button
+                          type="button"
+                          className="absolute left-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/90 text-on-surface-10 hover:bg-white flex items-center justify-center"
+                          aria-label="이전 이미지"
+                          onClick={() =>
+                            setGalleryDetailIndex((prev) =>
+                              (prev - 1 + galleryDetailImages.length) % galleryDetailImages.length,
+                            )
+                          }
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/90 text-on-surface-10 hover:bg-white flex items-center justify-center"
+                          aria-label="다음 이미지"
+                          onClick={() => setGalleryDetailIndex((prev) => (prev + 1) % galleryDetailImages.length)}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className="absolute left-1/2 -translate-x-1/2 -bottom-12 h-9 w-9 rounded-full bg-white/25 text-white hover:bg-white/35 flex items-center justify-center text-[20px] leading-none"
+                      aria-label="상세보기 닫기"
+                      onClick={() => setGalleryDetailOpen(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>
@@ -3667,6 +4737,48 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           </div>
 
           <DialogTitle className="sr-only">이미지 편집</DialogTitle>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={sharePreviewOpen} onOpenChange={setSharePreviewOpen}>
+        <DialogContent className="w-[420px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border p-0 overflow-hidden">
+          <div className="p-5 border-b border-border">
+            <DialogTitle className="text-[16px] font-semibold text-on-surface-10">공유 썸네일 미리보기</DialogTitle>
+          </div>
+          <div className="p-5 bg-[color:var(--surface-10)]">
+            <div className="w-full rounded-xl border border-border bg-white overflow-hidden">
+              {((data.share as any)?.useThumbnail ?? true) &&
+                (!!data.share?.thumbnail ? (
+                  <img
+                    src={data.share.thumbnail}
+                    alt="공유 썸네일"
+                    className="w-full aspect-[1.91/1] object-cover"
+                  />
+                ) : (
+                  <div className="w-full aspect-[1.91/1] bg-[color:var(--surface-20)] flex items-center justify-center text-[12px] text-on-surface-30">
+                    썸네일 이미지가 없습니다.
+                  </div>
+                ))}
+              <div className="p-4 flex flex-col gap-1.5 text-left">
+                <p className="text-[14px] font-semibold text-on-surface-10 line-clamp-1">
+                  {data.share?.title?.trim() || "모바일 청첩장"}
+                </p>
+                <p className="text-[12px] text-on-surface-20 line-clamp-2">
+                  {data.share?.description?.trim() || "소중한 날에 초대합니다."}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="p-4 border-t border-border bg-white flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
+              onClick={() => setSharePreviewOpen(false)}
+            >
+              닫기
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

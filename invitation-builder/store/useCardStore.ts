@@ -77,6 +77,7 @@ export interface CardData {
   hosts: { groom: Profile; bride: Profile; showContacts: boolean };
   eventInfo: EventInfo;
   greeting: { title: string; content: string };
+  notice: { title: string; content: string };
   location: {
     title?: string;
     address: string;
@@ -95,10 +96,37 @@ export interface CardData {
     content: string;
     list: AccountItem[];
   };
-  gallery: { isOn: boolean; type: 'swipe' | 'list'; images: string[] };
-  guestbook: { isOn: boolean; password: string };
-  youtube: { isOn: boolean; url: string };
-  share: { thumbnail: string; title: string; description: string };
+  gallery: {
+    isOn: boolean;
+    type: 'swipe' | 'list';
+    images: string[];
+    imageGap?: 'none' | 'small' | 'middle' | 'large';
+  };
+  guestbook: {
+    isOn: boolean;
+    title: string;
+    description: string;
+    password: string;
+    allowAnonymous: boolean;
+    requireApproval: boolean;
+    entries: Array<{
+      id: string;
+      name: string;
+      message: string;
+      createdAt: string;
+      isSecret: boolean;
+    }>;
+  };
+  youtube: { isOn: boolean; title: string; url: string; isLoop: boolean };
+  share: {
+    useThumbnail: boolean;
+    thumbnail: string;
+    title: string;
+    description: string;
+    link: string;
+    enableCopy: boolean;
+    enableKakao: boolean;
+  };
   protect: { preventCapture: boolean; preventZoom: boolean; preventDownload: boolean };
   sectionEnabled: Record<string, boolean>;
 }
@@ -150,6 +178,10 @@ export const useCardStore = create<CardStore>((set) => ({
     },
     eventInfo: { date: '2026-10-29', time: '오후 2:00', venueName: '더 신라 서울', venueDetail: '다이너스티 홀 3F', useCalendar: true, showDday: true },
     greeting: { title: '초대합니다', content: '서로가 마주보며 다져온 사랑을\n이제 함께 한 곳을 바라보며\n걸어가고자 합니다.' },
+    notice: {
+      title: '안내사항',
+      content: '마음 편히 오셔서 함께 축복해 주세요.\n예식장 내 주차가 가능하며, 식전 30분 전부터 입장이 가능합니다.',
+    },
     location: {
       title: '오시는 길',
       address: '',
@@ -184,10 +216,41 @@ export const useCardStore = create<CardStore>((set) => ({
         },
       ],
     },
-    gallery: { isOn: true, type: 'swipe', images: [] },
-    guestbook: { isOn: false, password: '' },
-    youtube: { isOn: false, url: '' },
-    share: { thumbnail: '', title: '김민준 ♥ 박서연 결혼식', description: '서로가 마주보며 다져온 사랑을 이제 함께 한 곳을 바라보며 걸어가고자 합니다.' },
+    gallery: { isOn: true, type: 'swipe', images: [], imageGap: 'middle' },
+    guestbook: {
+      isOn: false,
+      title: '방명록',
+      description: '축하 인사를 남겨주세요.',
+      password: '',
+      allowAnonymous: true,
+      requireApproval: false,
+      entries: [
+        {
+          id: 'gb-1',
+          name: '이하늘',
+          message: '두 분의 결혼을 진심으로 축하드립니다. 오래오래 행복하세요!',
+          createdAt: '2026.03.15 10:20',
+          isSecret: false,
+        },
+        {
+          id: 'gb-2',
+          name: '김서윤',
+          message: '예쁜 날, 예쁜 마음으로 축하드려요. 직접 가서 축하할게요!',
+          createdAt: '2026.03.15 14:02',
+          isSecret: false,
+        },
+      ],
+    },
+    youtube: { isOn: false, title: '영상으로 전하는 마음', url: '', isLoop: false },
+    share: {
+      useThumbnail: true,
+      thumbnail: '',
+      title: '김민준 ♥ 박서연 결혼식',
+      description: '서로가 마주보며 다져온 사랑을 이제 함께 한 곳을 바라보며 걸어가고자 합니다.',
+      link: '',
+      enableCopy: true,
+      enableKakao: true,
+    },
     protect: { preventCapture: false, preventZoom: false, preventDownload: false },
     sectionEnabled: {},
   },

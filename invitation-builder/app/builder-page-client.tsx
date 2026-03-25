@@ -2177,7 +2177,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                 </div>
               </div>
               <div className="inline-flex justify-start items-center gap-0">
-                {images.map((_, idx) => (
+                {images.map((_: string, idx: number) => (
                   <button
                     key={`gallery-dot-${idx}`}
                     type="button"

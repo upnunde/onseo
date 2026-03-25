@@ -119,7 +119,14 @@ export interface CardData {
       isSecret: boolean;
     }>;
   };
-  youtube: { isOn: boolean; title: string; url: string; isLoop: boolean };
+  youtube: {
+    isOn: boolean;
+    title: string;
+    url: string;
+    isLoop: boolean;
+    sourceType?: 'file' | 'url';
+    fileUrl?: string;
+  };
   share: {
     useThumbnail: boolean;
     thumbnail: string;
@@ -317,7 +324,7 @@ export const useCardStore = create<CardStore>((set) => ({
       requireApproval: false,
       entries: INITIAL_GUESTBOOK_ENTRIES,
     },
-    youtube: { isOn: false, title: '영상으로 전하는 마음', url: '', isLoop: false },
+    youtube: { isOn: false, title: '영상으로 전하는 마음', url: '', isLoop: false, sourceType: 'url', fileUrl: '' },
     share: {
       useThumbnail: true,
       thumbnail: '',

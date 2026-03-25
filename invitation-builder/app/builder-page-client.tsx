@@ -2700,6 +2700,8 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
       }
       case 'youtube': {
         const title = ((data.youtube as any)?.title ?? "영상으로 전하는 마음") as string;
+        const sourceType = ((data.youtube as any)?.sourceType ?? 'url') as 'file' | 'url';
+        const fileUrl = ((data.youtube as any)?.fileUrl ?? '').trim();
         const videoId = getYoutubeVideoId(data.youtube?.url ?? "");
         const isLoop = !!(data.youtube as any)?.isLoop;
         const embedUrl = videoId
@@ -2708,7 +2710,23 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
         return (
           <div className="max-w-full mx-auto w-full space-y-3 text-[0.8125em] text-on-surface-20">
             <p className="text-[0.875em] font-semibold text-on-surface-10">{title}</p>
-            {embedUrl ? (
+            {sourceType === 'file' ? (
+              fileUrl ? (
+                <div className="w-full aspect-video rounded-xl overflow-hidden border border-border bg-black">
+                  <video
+                    src={fileUrl}
+                    className="w-full h-full"
+                    controls
+                    loop={isLoop}
+                    playsInline
+                  />
+                </div>
+              ) : (
+                <div className="w-full h-28 rounded-xl border border-dashed border-border flex items-center justify-center text-on-surface-30">
+                  영상 파일을 첨부해 주세요.
+                </div>
+              )
+            ) : embedUrl ? (
               <div className="w-full aspect-video rounded-xl overflow-hidden border border-border bg-black">
                 <iframe
                   src={embedUrl}
@@ -2786,7 +2804,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
       <header className="w-full flex-shrink-0 bg-white border-b border-border z-30">
         <div className="h-16 flex items-center justify-between px-6">
           <div className="flex items-center gap-2">
-            <span className="text-xl font-extrabold tracking-tighter text-on-surface-10">온서로</span>
+            <span className="text-xl font-extrabold tracking-tighter text-on-surface-10">majihada</span>
           </div>
           <button className="bg-[color:var(--key)] text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-[color:var(--key-dark)] transition-colors shadow-none">
             저장하기
@@ -4806,19 +4824,82 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                       {/* 유튜브 섹션 */}
                       {item.id === 'youtube' && (
                         <>
+                          <FormItem label="타입">
+                            <div className="flex flex-wrap gap-2">
+                              <OptionChip
+                                label="파일첨부"
+                                active={(((data.youtube as any)?.sourceType ?? 'url') === 'file')}
+                                onClick={() => updateData('youtube.sourceType', 'file')}
+                              />
+                              <OptionChip
+                                label="URL"
+                                active={(((data.youtube as any)?.sourceType ?? 'url') === 'url')}
+                                onClick={() => updateData('youtube.sourceType', 'url')}
+                              />
+                            </div>
+                          </FormItem>
+                          {(((data.youtube as any)?.sourceType ?? 'url') === 'file') ? (
+                            <FormItem label="영상 파일">
+                              <div className="flex-1 flex flex-col gap-2">
+                                <div className="w-full h-[120px] flex items-center gap-2">
+                                  <div className="h-full aspect-video rounded-lg border border-border bg-[color:var(--surface-20)] overflow-hidden">
+                                    {((data.youtube as any)?.fileUrl ?? '') ? (
+                                      <video
+                                        src={(data.youtube as any).fileUrl}
+                                        className="w-full h-full object-cover"
+                                        muted
+                                        playsInline
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[12px] text-on-surface-30">
+                                        영상 파일이 없습니다.
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="h-full flex flex-col justify-start gap-2">
+                                    <label className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50">
+                                      파일 선택
+                                      <input
+                                        type="file"
+                                        accept="video/*"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (!file) return;
+                                          const url = URL.createObjectURL(file);
+                                          updateData('youtube.fileUrl', url);
+                                          e.currentTarget.value = '';
+                                        }}
+                                      />
+                                    </label>
+                                    {!!((data.youtube as any)?.fileUrl ?? '') && (
+                                      <button
+                                        type="button"
+                                        className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-30 hover:text-on-surface-10 hover:bg-slate-50"
+                                        onClick={() => updateData('youtube.fileUrl', '')}
+                                      >
+                                        삭제
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </FormItem>
+                          ) : (
+                            <FormItem label="링크">
+                              <Input
+                                value={data.youtube?.url ?? ""}
+                                onChange={(e) => updateData('youtube.url', e.target.value)}
+                                placeholder="https://youtu.be/... 또는 https://www.youtube.com/watch?v=..."
+                                className="shadow-none flex-1"
+                              />
+                            </FormItem>
+                          )}
                           <FormItem label="제목">
                             <Input
                               value={(data.youtube as any)?.title ?? ""}
                               onChange={(e) => updateData('youtube.title', e.target.value)}
                               placeholder="영상으로 전하는 마음"
-                              className="shadow-none flex-1"
-                            />
-                          </FormItem>
-                          <FormItem label="유튜브 링크">
-                            <Input
-                              value={data.youtube?.url ?? ""}
-                              onChange={(e) => updateData('youtube.url', e.target.value)}
-                              placeholder="https://youtu.be/... 또는 https://www.youtube.com/watch?v=..."
                               className="shadow-none flex-1"
                             />
                           </FormItem>

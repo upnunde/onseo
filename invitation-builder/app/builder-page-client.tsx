@@ -22,6 +22,7 @@ const KEY_COLOR_PRESETS: KeyColorPreset[] = [
   { id: "pastel-3", label: "더미 3", key: "#8ECFC5", keyDark: "#74B8AE", primaryContainer: "#EAF8F5", onPrimaryContainer: "#4F988D", background: "#FAFEFD" },
   { id: "pastel-4", label: "더미 4", key: "#9FB6F4", keyDark: "#839CE0", primaryContainer: "#EEF3FF", onPrimaryContainer: "#5D76C9", background: "#FCFDFF" },
   { id: "pastel-5", label: "더미 5", key: "#EBC39A", keyDark: "#D4A978", primaryContainer: "#FCF2E7", onPrimaryContainer: "#B67D43", background: "#FFFEFC" },
+  { id: "mono-1", label: "무채색", key: "#212121", keyDark: "#212121", primaryContainer: "#F5F5F5", onPrimaryContainer: "#212121", background: "#FFFFFF" },
 ];
 
 function buildOsmEmbedUrl(lat: number, lon: number) {
@@ -397,7 +398,7 @@ function Input(props: React.ComponentProps<typeof RawInput>) {
 const sidebarItems = [
   // 필수 사항
   { id: 'theme', icon: Palette, label: '테마', category: '필수' },
-  { id: 'bgm', icon: Music, label: '배경음악', category: '필수' },
+  { id: 'bgm', icon: Music, label: '배경음악', category: '필수', hasSwitch: true },
   { id: 'main', icon: ImageIcon, label: '메인', category: '필수' },
   { id: 'hosts', icon: Users, label: '신랑신부', category: '필수' },
   { id: 'greeting', icon: MessageSquare, label: '인사말', category: '필수' },
@@ -751,6 +752,8 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   const { data, updateData } = useCardStore();
   const baseLayoutOrder = ['main', 'greeting', 'hosts', 'eventInfo', 'location'];
   const sectionEnabled = data.sectionEnabled ?? {};
+  const isSectionEnabled = (id: string) => sectionEnabled[id] ?? (id === 'bgm');
+  const isBgmEnabled = isSectionEnabled('bgm');
   const setSectionEnabled = (updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
     const next = typeof updater === 'function' ? updater(sectionEnabled) : updater;
     updateData('sectionEnabled', next);
@@ -858,6 +861,8 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   const [guestbookDraftMessage, setGuestbookDraftMessage] = useState("");
   const [guestbookDraftPassword, setGuestbookDraftPassword] = useState("");
   const [accountPreviewExpandedMap, setAccountPreviewExpandedMap] = useState<Record<string, boolean>>({});
+  const [copyToastVisible, setCopyToastVisible] = useState(false);
+  const copyToastTimeoutRef = useRef<number | null>(null);
   const gallerySwipeStartXRef = useRef<number | null>(null);
   const [mainPreviewRandomEffect, setMainPreviewRandomEffect] = useState<
     | '크로스페이드'
@@ -913,6 +918,25 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
       document.removeEventListener('mousedown', handlePointerDown);
     };
   }, [guestbookMenuEntryId]);
+
+  useEffect(() => {
+    return () => {
+      if (copyToastTimeoutRef.current) {
+        window.clearTimeout(copyToastTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showCopyToast = () => {
+    setCopyToastVisible(true);
+    if (copyToastTimeoutRef.current) {
+      window.clearTimeout(copyToastTimeoutRef.current);
+    }
+    copyToastTimeoutRef.current = window.setTimeout(() => {
+      setCopyToastVisible(false);
+      copyToastTimeoutRef.current = null;
+    }, 2000);
+  };
 
   const [imageEditorOpen, setImageEditorOpen] = useState(false);
   const [imageEditorSrc, setImageEditorSrc] = useState<string>('');
@@ -1221,12 +1245,12 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   const mainImageInputRef = useRef<HTMLInputElement | null>(null);
   const mainMultiBatchInputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const playIntentRef = useRef(false);
+  const playIntentRef = useRef(true);
   const objectUrlRef = useRef<string | null>(null);
   const mainImageObjectUrlRef = useRef<string | null>(null);
   const simulateTimerRef = useRef<number | null>(null);
 
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [currentTime, setCurrentTime] = useState(0);
@@ -1341,6 +1365,60 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
     }
     setIsPlaying(false);
   };
+
+  const handleBgmPlay = async () => {
+    const audio = audioRef.current;
+    if (!musicSrc) {
+      playIntentRef.current = true;
+      setMuted(false);
+      if (volume <= 0) setVolume(0.8);
+      setIsPlaying(true);
+      startSimulatedPlayback();
+      return;
+    }
+    if (!audio) return;
+    try {
+      playIntentRef.current = true;
+      audio.muted = false;
+      audio.volume = volume > 0 ? volume : 0.8;
+      setMuted(false);
+      if (volume <= 0) setVolume(0.8);
+      await audio.play();
+      setIsPlaying(true);
+    } catch {
+      playIntentRef.current = false;
+      setIsPlaying(false);
+    }
+  };
+
+  const handleBgmStop = () => {
+    const audio = audioRef.current;
+    if (!musicSrc) {
+      playIntentRef.current = false;
+      stopSimulatedPlayback();
+      setCurrentTime(0);
+      return;
+    }
+    if (!audio) return;
+    playIntentRef.current = false;
+    audio.pause();
+    audio.currentTime = 0;
+    setCurrentTime(0);
+    setIsPlaying(false);
+  };
+
+  useEffect(() => {
+    if (isBgmEnabled) return;
+    // 배경음악 섹션 OFF 시 실제 재생도 즉시 중지
+    playIntentRef.current = false;
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    stopSimulatedPlayback();
+    setCurrentTime(0);
+  }, [isBgmEnabled]);
 
   useEffect(() => {
     return () => {
@@ -1589,7 +1667,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
     ...baseLayoutOrder,
     ...orderedContentOptionalItems
       .map((i) => i.id)
-      .filter((id) => (sectionEnabled[id] ?? false) && id !== "share" && id !== "protect"),
+      .filter((id) => isSectionEnabled(id) && id !== "share" && id !== "protect"),
   ];
   const orderedItems = [...requiredItems, ...orderedContentOptionalItems, ...otherOptionItems];
 
@@ -1905,16 +1983,92 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           </div>
         );
       }
-      case 'eventInfo':
+      case 'eventInfo': {
+        const dateText = (data.eventInfo.date ?? "").trim();
+        const eventDate = dateText ? new Date(`${dateText}T00:00:00`) : null;
+        const isValidEventDate = !!eventDate && Number.isFinite(eventDate.getTime());
+        const showCalendar = !!(data.eventInfo as any)?.useCalendar;
+        const showDday = !!(data.eventInfo as any)?.showDday;
+
+        let ddayLabel = "";
+        if (showDday && isValidEventDate) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const target = new Date(eventDate!);
+          target.setHours(0, 0, 0, 0);
+          const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+          ddayLabel = diffDays > 0 ? `D-${diffDays}` : diffDays < 0 ? `D+${Math.abs(diffDays)}` : "D-DAY";
+        }
+
+        let monthLabel = "";
+        let calendarCells: Array<{ key: string; day?: number; isEvent?: boolean }> = [];
+        if (showCalendar && isValidEventDate) {
+          const year = eventDate!.getFullYear();
+          const month = eventDate!.getMonth();
+          const firstWeekday = new Date(year, month, 1).getDay();
+          const lastDay = new Date(year, month + 1, 0).getDate();
+          monthLabel = `${year}.${String(month + 1).padStart(2, "0")}`;
+          for (let i = 0; i < firstWeekday; i += 1) {
+            calendarCells.push({ key: `blank-${i}` });
+          }
+          for (let d = 1; d <= lastDay; d += 1) {
+            calendarCells.push({
+              key: `day-${d}`,
+              day: d,
+              isEvent: d === eventDate!.getDate(),
+            });
+          }
+        }
+
         return (
-          <div className="max-w-[320px] mx-auto space-y-2 text-[0.8125em] text-on-surface-20">
-            <p className="text-[0.875em] font-semibold text-on-surface-10">
-              {data.eventInfo.date} · {data.eventInfo.time}
-            </p>
+          <div className="max-w-full w-full mx-auto space-y-3 text-[0.8125em] text-on-surface-20">
+            <div className="flex items-center justify-center gap-2">
+              <p className="text-[0.875em] font-semibold text-on-surface-10">
+                {data.eventInfo.date} · {data.eventInfo.time}
+              </p>
+              {ddayLabel && (
+                <span className="h-6 px-2 rounded-full bg-[color:var(--primary-container)] text-[color:var(--on-primary-container)] text-[0.75em] font-semibold inline-flex items-center">
+                  {ddayLabel}
+                </span>
+              )}
+            </div>
+
+            {showCalendar && isValidEventDate && (
+              <div className="w-full rounded-xl border border-[color:var(--key)]/20 bg-[color:var(--primary-container)] p-3 text-left shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[0.75em] font-semibold text-[color:var(--on-primary-container)]">WEDDING CALENDAR</p>
+                  <p className="text-[0.75em] text-[color:var(--on-primary-container)]/80">{monthLabel}</p>
+                </div>
+                <div className="grid grid-cols-7 gap-1 text-center text-[0.68em] text-[color:var(--on-primary-container)]/70 mb-1">
+                  {["일", "월", "화", "수", "목", "금", "토"].map((w) => (
+                    <span key={w}>{w}</span>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7 gap-1">
+                  {calendarCells.map((cell) => (
+                    <div
+                      key={cell.key}
+                      className={[
+                        "h-7 rounded-md flex items-center justify-center text-[0.74em]",
+                        cell.day
+                          ? cell.isEvent
+                            ? "bg-[color:var(--key)] text-white font-semibold shadow-sm"
+                            : "text-[color:var(--on-primary-container)]/85"
+                          : "",
+                      ].join(" ")}
+                    >
+                      {cell.day ?? ""}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <p>{data.eventInfo.venueName}</p>
             <p className="text-on-surface-30">{data.eventInfo.venueDetail}</p>
           </div>
         );
+      }
       case 'location':
         {
           const addressInput = (data.location.address || '').trim();
@@ -2271,7 +2425,25 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                     )}
                     {isOpen && (
                       <div className={`${displayMode === 'accordion' ? 'px-3 pb-3' : 'px-3 py-3'}`}>
-                        <div className="font-semibold text-[color:var(--on-primary-container)]">{acc.bank || "은행"} {acc.accountNumber || "계좌번호"}</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-semibold text-[color:var(--on-primary-container)]">{acc.bank || "은행"} {acc.accountNumber || "계좌번호"}</div>
+                          <button
+                            type="button"
+                            className="h-7 px-2 rounded-md border border-[color:var(--key)]/30 bg-white/70 text-[11px] font-medium text-[color:var(--on-primary-container)] hover:bg-white transition-colors"
+                            onClick={async () => {
+                              const accountNumber = String(acc.accountNumber ?? "").trim();
+                              if (!accountNumber) return;
+                              try {
+                                await navigator.clipboard.writeText(accountNumber);
+                                showCopyToast();
+                              } catch {
+                                // ignore clipboard permission failures
+                              }
+                            }}
+                          >
+                            복사
+                          </button>
+                        </div>
                         <div className="text-[color:var(--on-primary-container)]/75">{acc.holder || "예금주"}</div>
                       </div>
                     )}
@@ -2322,8 +2494,8 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                 </div>
               )}
               {pagedEntries.map((entry: any) => (
-                <div key={entry.id} className="rounded-lg border border-border bg-white px-4 pt-2 pb-3 flex flex-col space-y-0 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-                  <div className="flex items-center justify-between">
+                <div key={entry.id} className="rounded-lg border border-border bg-white px-4 pt-3 pb-3 flex flex-col gap-1 space-y-0 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                  <div className="flex items-center justify-between -mr-2">
                     <span className="font-semibold text-on-surface-10">
                       {entry.name || "작성자"}
                     </span>
@@ -2631,13 +2803,20 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           <div className="flex flex-col gap-y-2 mb-6 w-full items-center">
             {sidebarItems.filter(i => i.category === '필수').map((item) => {
               const isActive = activeSection === item.id;
+              const isDisabled = item.hasSwitch && !isSectionEnabled(item.id);
               return (
                 <div 
-                  key={item.id} onClick={() => scrollToSection(item.id)}
-                  className={`flex flex-col items-center justify-center gap-y-1 w-[80px] h-[64px] rounded-lg cursor-pointer transition-colors shadow-none ${isActive ? 'bg-slate-100' : 'text-on-surface-20 hover:bg-slate-100'}`}
+                  key={item.id} onClick={() => { if (item.id === 'bgm' || !isDisabled) scrollToSection(item.id); }}
+                  className={`flex flex-col items-center justify-center gap-y-1 w-[80px] h-[64px] rounded-lg cursor-pointer transition-colors shadow-none ${
+                    isDisabled
+                      ? 'opacity-50 text-on-surface-30 hover:bg-slate-100'
+                      : isActive
+                        ? 'bg-slate-100'
+                        : 'text-on-surface-20 hover:bg-slate-100'
+                  }`}
                 >
-                  <item.icon className={`w-6 h-6 ${isActive ? 'text-[color:var(--key)]' : 'text-on-surface-30'}`} strokeWidth={1.5} />
-                  <span className={`text-[12px] font-normal ${isActive ? 'text-[color:var(--key)]' : 'text-on-surface-20'}`}>{item.label}</span>
+                  <item.icon className={`w-6 h-6 ${isDisabled ? 'text-on-surface-30' : isActive ? 'text-[color:var(--key)]' : 'text-on-surface-30'}`} strokeWidth={1.5} />
+                  <span className={`text-[12px] font-normal ${isDisabled ? 'text-on-surface-30' : isActive ? 'text-[color:var(--key)]' : 'text-on-surface-20'}`}>{item.label}</span>
                 </div>
               );
             })}
@@ -2649,7 +2828,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           <div className="flex flex-col gap-y-2 pb-10 w-full items-center">
             {orderedContentOptionalItems.map((item) => {
               const isActive = activeSection === item.id;
-              const isDisabled = item.hasSwitch && !(sectionEnabled[item.id] ?? false);
+              const isDisabled = item.hasSwitch && !isSectionEnabled(item.id);
               const { handleProps, wrapperProps, isDragging } = sidebarSortable.getItemProps(item.id);
               return (
                 <div
@@ -2675,7 +2854,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           <div className="flex flex-col gap-y-2 pb-10 w-full items-center">
             {otherOptionItems.map((item) => {
               const isActive = activeSection === item.id;
-              const isDisabled = item.hasSwitch && !(sectionEnabled[item.id] ?? false);
+              const isDisabled = item.hasSwitch && !isSectionEnabled(item.id);
               return (
                 <div
                   key={item.id}
@@ -2749,7 +2928,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                       {item.hasSwitch && (
                         <Switch
                           className="ml-2 flex-shrink-0"
-                          checked={sectionEnabled[item.id] ?? false}
+                          checked={isSectionEnabled(item.id)}
                           onCheckedChange={(checked) => {
                             setSectionEnabled((prev) => ({ ...prev, [item.id]: checked }));
                             if (checked) {
@@ -2772,7 +2951,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                     )}
                   </div>
 
-                  {isInitiallyExpanded && (!item.hasSwitch || sectionEnabled[item.id]) && (
+                  {isInitiallyExpanded && (!item.hasSwitch || isSectionEnabled(item.id)) && (
                     <div className="p-6 bg-white flex flex-col gap-5 border-t border-border">
                       {/* 테마 섹션 */}
                       {item.id === 'theme' && (
@@ -3191,24 +3370,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                                   <button
                                     type="button"
                                     className="w-8 h-8 flex items-center justify-center flex-shrink-0 rounded-full border border-border bg-transparent text-on-surface-30 hover:bg-white/60 hover:text-on-surface-10 transition-colors"
-                                    onClick={async () => {
-                                      const audio = audioRef.current;
-                                      if (!musicSrc) {
-                                        playIntentRef.current = true;
-                                        setIsPlaying(true);
-                                        startSimulatedPlayback();
-                                        return;
-                                      }
-                                      if (!audio) return;
-                                      try {
-                                        playIntentRef.current = true;
-                                        await audio.play();
-                                        setIsPlaying(true);
-                                      } catch {
-                                        playIntentRef.current = false;
-                                        setIsPlaying(false);
-                                      }
-                                    }}
+                                    onClick={handleBgmPlay}
                                     aria-label="재생"
                                   >
                                     <Play className="w-4 h-4 text-[color:var(--on-surface-10)] fill-current" fill="currentColor" />
@@ -3217,21 +3379,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                                   <button
                                     type="button"
                                     className="w-8 h-8 flex items-center justify-center flex-shrink-0 rounded-full border border-border bg-transparent text-on-surface-30 hover:bg-white/60 hover:text-on-surface-10 transition-colors"
-                                    onClick={() => {
-                                      const audio = audioRef.current;
-                                      if (!musicSrc) {
-                                        playIntentRef.current = false;
-                                        stopSimulatedPlayback();
-                                        setCurrentTime(0);
-                                        return;
-                                      }
-                                      if (!audio) return;
-                                      playIntentRef.current = false;
-                                      audio.pause();
-                                      audio.currentTime = 0;
-                                      setCurrentTime(0);
-                                      setIsPlaying(false);
-                                    }}
+                                    onClick={handleBgmStop}
                                     aria-label="정지"
                                   >
                                     <div className="w-3 h-3 rounded-[2px] bg-[color:var(--on-surface-10)]" />
@@ -4070,19 +4218,22 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                                 className="resize-none shadow-none flex-1"
                               />
                             </FormItem>
-                            <FormItem label="표시 방식">
-                              <div className="flex flex-wrap gap-2">
-                                {([
-                                  { value: 'accordion', label: '접기/펼치기' },
-                                  { value: 'expanded', label: '전체 펼침' },
-                                ] as const).map((opt) => (
-                                  <OptionChip
-                                    key={opt.value}
-                                    label={opt.label}
-                                    active={(((data.accounts as any)?.displayMode ?? 'accordion') === opt.value)}
-                                    onClick={() => updateData('accounts.displayMode', opt.value)}
+                            <FormItem label="옵션">
+                              <div className="flex flex-col gap-1 text-[13px] text-on-surface-20">
+                                <div className="flex items-center gap-2">
+                                  <CircleCheckbox
+                                    checked={(((data.accounts as any)?.displayMode ?? 'accordion') === 'accordion')}
+                                    onChange={(e) => {
+                                      const useAccordion = e.target.checked;
+                                      // 체크: 접힘/펼침 모드(초기 접힘), 해제: 전체 노출
+                                      updateData('accounts.displayMode', useAccordion ? 'accordion' : 'expanded');
+                                      if (useAccordion) {
+                                        setAccountPreviewExpandedMap({});
+                                      }
+                                    }}
                                   />
-                                ))}
+                                  <span>계좌 보이기</span>
+                                </div>
                               </div>
                             </FormItem>
                           </div>
@@ -4157,23 +4308,6 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                                     placeholder="예금주"
                                     className="text-[13px] flex-1"
                                   />
-                                </FormItem>
-
-                                {/* 접기/펼치기 모드에서 직접/간접 노출 제어 */}
-                                <FormItem label="옵션">
-                                  <div className="flex flex-col gap-1 text-[13px] text-on-surface-20">
-                                    <div className="flex items-center gap-2">
-                                      <CircleCheckbox
-                                        checked={item.isExpanded}
-                                        onChange={(e) => {
-                                          const next = [...data.accounts.list];
-                                          next[index] = { ...item, isExpanded: e.target.checked };
-                                          updateData('accounts.list', next);
-                                        }}
-                                      />
-                                      <span>계좌 보이기</span>
-                                    </div>
-                                  </div>
                                 </FormItem>
                               </div>
                             </React.Fragment>
@@ -4968,6 +5102,32 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                   </div>
                 ))}
               </div>
+              {isBgmEnabled && (
+                <button
+                  type="button"
+                  onClick={() => (isPlaying ? handleBgmStop() : void handleBgmPlay())}
+                  className={[
+                    "absolute bottom-4 right-4 z-20 h-12 w-12 rounded-full shadow-[0_4px_14px_rgba(0,0,0,0.18)] flex items-center justify-center border border-white/25 transition-[transform,filter,opacity] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--key)] focus-visible:ring-offset-2",
+                    "bg-[color:var(--key)] text-white hover:brightness-110 active:scale-[0.98]",
+                  ].join(" ")}
+                  aria-label={isPlaying ? "배경음악 끄기" : "배경음악 켜기"}
+                >
+                  <span
+                    className="w-5 h-5 shrink-0 bg-current"
+                    style={{
+                      WebkitMaskImage: `url(${isPlaying ? "/music-note.svg" : "/music-off.svg"})`,
+                      maskImage: `url(${isPlaying ? "/music-note.svg" : "/music-off.svg"})`,
+                      WebkitMaskRepeat: "no-repeat",
+                      maskRepeat: "no-repeat",
+                      WebkitMaskPosition: "center",
+                      maskPosition: "center",
+                      WebkitMaskSize: "contain",
+                      maskSize: "contain",
+                    } as React.CSSProperties}
+                    aria-hidden
+                  />
+                </button>
+              )}
               {galleryDetailOpen && galleryDetailImages.length > 0 && (
                 <div
                   className="absolute inset-0 z-30 bg-black/70 flex items-center justify-center p-6"
@@ -5016,6 +5176,13 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                     >
                       ×
                     </button>
+                  </div>
+                </div>
+              )}
+              {copyToastVisible && (
+                <div className="absolute left-1/2 bottom-6 -translate-x-1/2 z-30 pointer-events-none">
+                  <div className="rounded-full bg-black/85 px-4 py-2 text-[13px] font-medium text-white shadow-lg whitespace-nowrap">
+                    계좌번호가 복사되었습니다.
                   </div>
                 </div>
               )}

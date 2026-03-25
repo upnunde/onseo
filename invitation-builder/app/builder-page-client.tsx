@@ -410,7 +410,7 @@ const sidebarItems = [
   { id: 'gallery', icon: Images, label: '갤러리', category: '선택', hasSwitch: true },
   { id: 'account', icon: Wallet, label: '계좌정보', category: '선택', hasSwitch: true },
   { id: 'guestbook', icon: BookOpen, label: '방명록', category: '선택', hasSwitch: true },
-  { id: 'youtube', icon: Youtube, label: '유튜브', category: '선택', hasSwitch: true },
+  { id: 'youtube', icon: Youtube, label: '영상', category: '선택', hasSwitch: true },
   { id: 'guestUpload', icon: Images, label: '하객사진 받기', category: '선택', hasSwitch: true },
   { id: 'share', icon: Share2, label: '공유', category: '선택' },
   { id: 'protect', icon: Shield, label: '보호', category: '선택' },
@@ -4132,21 +4132,23 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                               </div>
                             ))}
 
-                            <div className="pt-0 flex justify-center">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="rounded-lg px-4 h-10 text-[13px]"
-                                onClick={() => {
-                                  setTransportItems([
-                                    ...transportItems,
-                                    { mode: '', detail: '' },
-                                  ]);
-                                }}
-                              >
-                                + 교통수단 추가
-                              </Button>
-                            </div>
+                            {transportItems.length < 3 && (
+                              <div className="pt-0 flex justify-center">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="rounded-lg px-4 h-10 text-[13px]"
+                                  onClick={() => {
+                                    setTransportItems([
+                                      ...transportItems,
+                                      { mode: '', detail: '' },
+                                    ]);
+                                  }}
+                                >
+                                  + 교통수단 추가
+                                </Button>
+                              </div>
+                            )}
                           </div>
 
                           {locationSearchOpen && createPortal(
@@ -4347,31 +4349,34 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                             </React.Fragment>
                           ))}
 
-                          {/* 3. 하단 추가 버튼 */}
-                          <div className="pt-4 flex justify-center">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="rounded-lg px-4 h-10 text-[13px]"
-                              onClick={() => {
-                                const next = [
-                                  ...data.accounts.list,
-                                  {
-                                    id: `new-${Date.now()}`,
-                                    groupName: '',
-                                    bank: '',
-                                    accountNumber: '',
-                                    holder: '',
-                                    isKakaoPay: false,
-                                    isExpanded: true,
-                                  } as any,
-                                ];
-                                updateData('accounts.list', next);
-                              }}
-                            >
-                              + 계좌정보 추가
-                            </Button>
-                          </div>
+                          {/* 3. 하단 추가 버튼 (최대 6개까지만 추가) */}
+                          {data.accounts.list.length < 6 && (
+                            <div className="pt-4 flex justify-center">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="rounded-lg px-4 h-10 text-[13px]"
+                                onClick={() => {
+                                  if (data.accounts.list.length >= 6) return;
+                                  const next = [
+                                    ...data.accounts.list,
+                                    {
+                                      id: `new-${Date.now()}`,
+                                      groupName: '',
+                                      bank: '',
+                                      accountNumber: '',
+                                      holder: '',
+                                      isKakaoPay: false,
+                                      isExpanded: true,
+                                    } as any,
+                                  ];
+                                  updateData('accounts.list', next);
+                                }}
+                              >
+                                + 계좌정보 추가
+                              </Button>
+                            </div>
+                          )}
 
                           {/* 은행 선택 모달 (Portal로 body에 렌더링) */}
                           {bankModalIndex !== null && createPortal(
@@ -4570,28 +4575,43 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                               {idx > 0 && <div className="border-t border-dashed border-[color:var(--border-20)]" />}
                               <div className="flex flex-col gap-5 mb-0">
                                 <FormItem label="제목">
-                                  <Input
-                                    value={section.title ?? ""}
-                                    onChange={(e) => {
-                                      const nextSections = noticeSections.map((it, sectionIdx) =>
-                                        sectionIdx === idx ? { ...it, title: e.target.value } : it,
-                                      );
-                                      updateNoticeSections(nextSections);
-                                    }}
-                                    placeholder="안내사항"
-                                    className="shadow-none flex-1"
-                                  />
-                                  {noticeSections.length > 1 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const nextSections = noticeSections.filter((_, sectionIdx) => sectionIdx !== idx);
+                                  {idx > 0 ? (
+                                    <div className="flex items-center gap-2 flex-1">
+                                      <Input
+                                        value={section.title ?? ""}
+                                        onChange={(e) => {
+                                          const nextSections = noticeSections.map((it, sectionIdx) =>
+                                            sectionIdx === idx ? { ...it, title: e.target.value } : it,
+                                          );
+                                          updateNoticeSections(nextSections);
+                                        }}
+                                        placeholder="안내사항"
+                                        className="shadow-none flex-1"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const nextSections = noticeSections.filter((_, sectionIdx) => sectionIdx !== idx);
+                                          updateNoticeSections(nextSections);
+                                        }}
+                                        aria-label="안내사항 삭제"
+                                        className="flex-shrink-0 text-[12px] text-on-surface-30 hover:text-on-surface-10 transition-colors"
+                                      >
+                                        삭제
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <Input
+                                      value={section.title ?? ""}
+                                      onChange={(e) => {
+                                        const nextSections = noticeSections.map((it, sectionIdx) =>
+                                          sectionIdx === idx ? { ...it, title: e.target.value } : it,
+                                        );
                                         updateNoticeSections(nextSections);
                                       }}
-                                      className="flex-shrink-0 text-[12px] text-on-surface-30 hover:text-on-surface-10 transition-colors"
-                                    >
-                                      삭제
-                                    </button>
+                                      placeholder="안내사항"
+                                      className="shadow-none flex-1"
+                                    />
                                   )}
                                 </FormItem>
                                 <FormItem label="내용">
@@ -4772,31 +4792,32 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                             </div>,
                             document.body
                           )}
-                          <div className="pt-0 flex justify-center">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="rounded-lg px-4 h-10 text-[13px]"
-                              disabled={noticeSections.length >= 3}
-                              onClick={() => {
-                                if (noticeSections.length >= 3) return;
-                                const nextIndex = noticeSections.length;
-                                const nextSections = [
-                                  ...noticeSections,
-                                  {
-                                    id: `notice-${Date.now()}`,
-                                    title: `안내 ${nextIndex + 1}`,
-                                    content: '',
-                                  },
-                                ];
-                                updateNoticeSections(nextSections);
-                                setNoticeEditorTabIndex(nextIndex);
-                                setNoticePreviewTabIndex(nextIndex);
-                              }}
-                            >
-                              + 추가하기
-                            </Button>
-                          </div>
+                          {noticeSections.length < 3 && (
+                            <div className="pt-0 flex justify-center">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="rounded-lg px-4 h-10 text-[13px]"
+                                onClick={() => {
+                                  if (noticeSections.length >= 3) return;
+                                  const nextIndex = noticeSections.length;
+                                  const nextSections = [
+                                    ...noticeSections,
+                                    {
+                                      id: `notice-${Date.now()}`,
+                                      title: `안내 ${nextIndex + 1}`,
+                                      content: '',
+                                    },
+                                  ];
+                                  updateNoticeSections(nextSections);
+                                  setNoticeEditorTabIndex(nextIndex);
+                                  setNoticePreviewTabIndex(nextIndex);
+                                }}
+                              >
+                                + 추가하기
+                              </Button>
+                            </div>
+                          )}
                         </>
                       )}
 
@@ -5113,33 +5134,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                               className="resize-none shadow-none flex-1"
                             />
                           </FormItem>
-                          <div className="flex justify-end gap-2">
-                            {(((data.share as any)?.link ?? '').trim().length > 0) ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-10 inline-flex items-center cursor-pointer hover:bg-slate-50"
-                                onClick={async () => {
-                                  const linkToCopy = ((data.share as any)?.link ?? '').trim();
-                                  try {
-                                    await navigator.clipboard.writeText(linkToCopy);
-                                  } catch {
-                                    // ignore clipboard permission failures
-                                  }
-                                }}
-                              >
-                                링크복사
-                              </Button>
-                            ) : (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                disabled
-                                className="h-9 px-3 rounded-lg border border-border bg-white text-[13px] text-on-surface-30 inline-flex items-center opacity-60 cursor-not-allowed"
-                              >
-                                결제 이후 링크 복사하기
-                              </Button>
-                            )}
+                          <div className="flex justify-end">
                             <Button
                               type="button"
                               variant="outline"

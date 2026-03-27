@@ -48,19 +48,45 @@ function AppLabel({
 
 // 원형 체크박스 컴포넌트 (기본 20x20)
 function CircleCheckbox(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  const { className = '', ...rest } = props;
+  const { className = '', checked, onChange, disabled, ...rest } = props;
+  const emitToggle = () => {
+    if (disabled) return;
+    const nextChecked = !Boolean(checked);
+    if (onChange) {
+      const syntheticEvent = {
+        target: { checked: nextChecked },
+        currentTarget: { checked: nextChecked },
+      } as React.ChangeEvent<HTMLInputElement>;
+      onChange(syntheticEvent);
+    }
+  };
   return (
     <label
-      className="relative inline-flex items-center cursor-pointer"
+      className={`relative inline-flex items-center ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
       onClick={(e) => {
-        // 바깥 옵션 row(onClick)와 중복 토글 방지
+        // 바깥 옵션 row(onClick)와 중복 토글 방지 + 커스텀 토글 보장
+        e.preventDefault();
         e.stopPropagation();
+        emitToggle();
       }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          emitToggle();
+        }
+      }}
+      role="checkbox"
+      aria-checked={Boolean(checked)}
+      tabIndex={disabled ? -1 : 0}
     >
       <input
         type="checkbox"
         className={`sr-only peer ${className}`}
-        {...rest}
+        checked={Boolean(checked)}
+        onChange={onChange}
+        disabled={disabled}
+        {...(rest as Omit<React.InputHTMLAttributes<HTMLInputElement>, 'checked' | 'onChange' | 'disabled'>)}
       />
       <span
         className="
@@ -531,6 +557,78 @@ function FormItem({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
+function HostContactField({
+  label,
+  nameValue,
+  onNameChange,
+  phoneValue,
+  onPhoneChange,
+  showPhone,
+  deceasedChecked,
+  onDeceasedChange,
+  keepDeceasedInline = false,
+}: {
+  label: string;
+  nameValue: string;
+  onNameChange: (value: string) => void;
+  phoneValue?: string;
+  onPhoneChange?: (value: string) => void;
+  showPhone: boolean;
+  deceasedChecked?: boolean;
+  onDeceasedChange?: (checked: boolean) => void;
+  keepDeceasedInline?: boolean;
+}) {
+  const hasDeceasedControl = typeof deceasedChecked === 'boolean' && !!onDeceasedChange;
+
+  return (
+    <FormItem label={label}>
+      <div className="flex flex-col gap-2 flex-1 w-full">
+        {hasDeceasedControl && keepDeceasedInline ? (
+          <div className="flex items-center gap-2 w-full">
+            <Input
+              placeholder="이름"
+              value={nameValue}
+              onChange={(e) => onNameChange(e.target.value)}
+              className="flex-1 shadow-none"
+            />
+            <span className="text-base font-medium text-on-surface-30 whitespace-nowrap">故</span>
+            <CircleCheckbox
+              checked={deceasedChecked}
+              onChange={(e) => onDeceasedChange(e.target.checked)}
+            />
+          </div>
+        ) : (
+          <Input
+            placeholder="이름"
+            value={nameValue}
+            onChange={(e) => onNameChange(e.target.value)}
+            className="flex-1 shadow-none"
+          />
+        )}
+
+        {showPhone && !!onPhoneChange && (
+          <Input
+            placeholder="전화번호를 입력하세요"
+            value={phoneValue ?? ''}
+            onChange={(e) => onPhoneChange(e.target.value)}
+            className="shadow-none"
+          />
+        )}
+      </div>
+
+      {hasDeceasedControl && !keepDeceasedInline && (
+        <>
+          <span className="text-base font-medium text-on-surface-30 whitespace-nowrap ml-2">故</span>
+          <CircleCheckbox
+            checked={deceasedChecked}
+            onChange={(e) => onDeceasedChange(e.target.checked)}
+          />
+        </>
+      )}
+    </FormItem>
+  );
+}
+
 function parseKoreanTime(value: string | undefined | null) {
   const fallback = { period: '오후', hour: 2, minute: '00' } as { period: '오전' | '오후'; hour: number; minute: string };
   if (!value) return fallback;
@@ -791,9 +889,19 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
       .filter((i) => i.category === '선택' && !OTHER_OPTION_IDS.includes(i.id as any))
       .map((i) => i.id)
   );
+  useEffect(() => {
+    // 새 선택 섹션이 추가되면 기존 순서 상태에 자동 편입
+    setOptionalOrder((prev) => {
+      const currentIds = sidebarItems
+        .filter((i) => i.category === '선택' && !OTHER_OPTION_IDS.includes(i.id as any))
+        .map((i) => i.id);
+      const normalizedPrev = prev.filter((id) => currentIds.includes(id));
+      const missing = currentIds.filter((id) => !normalizedPrev.includes(id));
+      if (missing.length === 0 && normalizedPrev.length === prev.length) return prev;
+      return [...normalizedPrev, ...missing];
+    });
+  }, []);
 
-  const showHostContacts = !!(data.hosts as any).showContacts;
-  const setShowHostContacts = (v: boolean) => updateData('hosts.showContacts', v);
   const [bankModalIndex, setBankModalIndex] = useState<number | null>(null);
   const [bankSearch, setBankSearch] = useState('');
   const [greetingSampleOpen, setGreetingSampleOpen] = useState(false);
@@ -896,7 +1004,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
 
     return presets.map((p) => ({
       ...p,
-      url: makeDataUri(makeBase(p.bg1, p.bg2, p.icon)),
+      url: p.id === 'flower' ? '/chrysanthemum.svg' : makeDataUri(makeBase(p.bg1, p.bg2, p.icon)),
     }));
   }, []);
 
@@ -966,6 +1074,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
   const [guestbookDraftMessage, setGuestbookDraftMessage] = useState("");
   const [guestbookDraftPassword, setGuestbookDraftPassword] = useState("");
   const [accountPreviewExpandedMap, setAccountPreviewExpandedMap] = useState<Record<string, boolean>>({});
+  const [contactPreviewExpanded, setContactPreviewExpanded] = useState(false);
   const [copyToastVisible, setCopyToastVisible] = useState(false);
   const copyToastTimeoutRef = useRef<number | null>(null);
   const gallerySwipeStartXRef = useRef<number | null>(null);
@@ -997,7 +1106,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
     setAccountPreviewExpandedMap((prev) => {
       const next: Record<string, boolean> = {};
       for (const acc of list) {
-        next[acc.id] = prev[acc.id] ?? !!acc.isExpanded;
+        next[acc.id] = prev[acc.id] ?? false;
       }
       return next;
     });
@@ -2020,65 +2129,231 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
       case 'hosts': {
         const groom = data.hosts.groom;
         const bride = data.hosts.bride;
-        const formatParentNames = (
+        const renderParentLabel = (
+          parent: typeof groom.father,
+          fallback: string,
+        ) => (
+          <span className="inline-flex items-center gap-1">
+            {parent.isDeceased ? (
+              <img
+                src="/chrysanthemum.svg"
+                alt="국화"
+                className="w-3.5 h-3.5 object-contain"
+                aria-hidden
+              />
+            ) : null}
+            <span>{parent.name || fallback}</span>
+          </span>
+        );
+        const renderParentNames = (
           father: typeof groom.father,
           mother: typeof groom.mother,
           fatherFallback: string,
           motherFallback: string,
-        ) => `${father.name || fatherFallback} \u00b7 ${mother.name || motherFallback}`;
-        const groomParents = formatParentNames(groom.father, groom.mother, '신랑 부', '신랑 모');
-        const brideParents = formatParentNames(bride.father, bride.mother, '신부 부', '신부 모');
-        const renderContactButtons = (phone: string) => {
-          const normalized = (phone ?? '').trim();
-          const telHref = normalized ? `tel:${normalized}` : undefined;
-          const smsHref = normalized ? `sms:${normalized}` : undefined;
-          return (
-            <div className="pt-2 flex items-center justify-center gap-3">
-              <a
-                href={telHref}
-                className={`w-14 h-14 rounded-full inline-flex items-center justify-center border border-border bg-[color:var(--surface-20)] text-on-surface-30 ${
-                  telHref ? 'hover:bg-[color:var(--surface-10)]' : 'pointer-events-none opacity-40'
-                }`}
-                aria-label="전화하기"
-              >
-                <Phone className="w-5 h-5" />
-              </a>
-              <a
-                href={smsHref}
-                className={`w-14 h-14 rounded-full inline-flex items-center justify-center border border-border bg-[color:var(--surface-20)] text-on-surface-30 ${
-                  smsHref ? 'hover:bg-[color:var(--surface-10)]' : 'pointer-events-none opacity-40'
-                }`}
-                aria-label="문자 보내기"
-              >
-                <MessageCircle className="w-5 h-5" />
-              </a>
-            </div>
-          );
-        };
+        ) => (
+          <>
+            {renderParentLabel(father, fatherFallback)} <span aria-hidden>·</span>{' '}
+            {renderParentLabel(mother, motherFallback)}
+          </>
+        );
+        const groomParents = renderParentNames(groom.father, groom.mother, '신랑 부', '신랑 모');
+        const brideParents = renderParentNames(bride.father, bride.mother, '신부 부', '신부 모');
         return (
           <div className="w-full max-w-[340px] mx-auto text-center">
-            <div className="grid grid-cols-2 gap-8">
-              <div className="space-y-3">
-                <p className="text-[1.75em] text-on-surface-30 leading-none">신랑</p>
-                <p className="text-[2.125em] font-semibold text-on-surface-10 leading-none">
+            <div className="grid grid-cols-2 gap-5">
+              <div className="space-y-2 rounded-xl border border-border bg-white/70 px-3 py-4">
+                <p className="text-[0.8125em] tracking-[0.08em] text-on-surface-30 leading-none">신랑</p>
+                <p className="text-[1.375em] font-semibold text-on-surface-10 leading-none">
                   {groom.name || '신랑 이름'}
                 </p>
-                <p className="text-[1.75em] text-on-surface-30 leading-snug break-keep">
+                <p className="text-[0.8125em] text-on-surface-30 leading-relaxed break-keep">
                   {groomParents} 의 아들
                 </p>
-                {showHostContacts && renderContactButtons(groom.phone)}
               </div>
-              <div className="space-y-3">
-                <p className="text-[1em] text-on-surface-30 leading-none">신부</p>
-                <p className="text-[1.5em] font-semibold text-on-surface-10 leading-none">
+              <div className="space-y-2 rounded-xl border border-border bg-white/70 px-3 py-4">
+                <p className="text-[0.8125em] tracking-[0.08em] text-on-surface-30 leading-none">신부</p>
+                <p className="text-[1.375em] font-semibold text-on-surface-10 leading-none">
                   {bride.name || '신부 이름'}
                 </p>
-                <p className="text-[1.75em] text-on-surface-30 leading-snug break-keep">
+                <p className="text-[0.8125em] text-on-surface-30 leading-relaxed break-keep">
                   {brideParents} 의 딸
                 </p>
-                {showHostContacts && renderContactButtons(bride.phone)}
               </div>
             </div>
+          </div>
+        );
+      }
+      case 'contact': {
+        const contactEnabled = isSectionEnabled('contact');
+        const groomName = (data.hosts.groom.name ?? '').trim() || '신랑';
+        const brideName = (data.hosts.bride.name ?? '').trim() || '신부';
+        const groomFatherName = (data.hosts.groom.father.name ?? '').trim();
+        const groomMotherName = (data.hosts.groom.mother.name ?? '').trim();
+        const brideFatherName = (data.hosts.bride.father.name ?? '').trim();
+        const brideMotherName = (data.hosts.bride.mother.name ?? '').trim();
+        const groomParentsText = [groomFatherName, groomMotherName].filter(Boolean).join(' · ');
+        const brideParentsText = [brideFatherName, brideMotherName].filter(Boolean).join(' · ');
+        const hasParentsText = groomParentsText.length > 0 || brideParentsText.length > 0;
+        const renderParentLabel = (
+          key: string,
+          name: string,
+          isDeceased: boolean,
+        ) => (
+          <span key={key} className="inline-flex items-center gap-1">
+            {isDeceased ? (
+              <img
+                src="/chrysanthemum.svg"
+                alt="국화"
+                className="w-3.5 h-3.5 object-contain"
+                aria-hidden
+              />
+            ) : null}
+            <span>{name}</span>
+          </span>
+        );
+        const renderParentsInline = (
+          fatherName: string,
+          motherName: string,
+          fatherDeceased: boolean,
+          motherDeceased: boolean,
+        ) => {
+          const parentNodes: React.ReactNode[] = [];
+          if (fatherName) {
+            parentNodes.push(renderParentLabel('father', fatherName, fatherDeceased));
+          }
+          if (motherName) {
+            if (parentNodes.length > 0) {
+              parentNodes.push(<span key="divider"> · </span>);
+            }
+            parentNodes.push(renderParentLabel('mother', motherName, motherDeceased));
+          }
+          return parentNodes;
+        };
+        const groomParentsInline = renderParentsInline(
+          groomFatherName,
+          groomMotherName,
+          data.hosts.groom.father.isDeceased,
+          data.hosts.groom.mother.isDeceased,
+        );
+        const brideParentsInline = renderParentsInline(
+          brideFatherName,
+          brideMotherName,
+          data.hosts.bride.father.isDeceased,
+          data.hosts.bride.mother.isDeceased,
+        );
+        const contactRows = [
+          { role: '신랑', name: groomName, phone: data.hosts.groom.phone, hidden: false },
+          { role: '신부', name: brideName, phone: data.hosts.bride.phone, hidden: false },
+          { role: '신랑 아버님', name: groomFatherName, phone: data.hosts.groom.father.phone, hidden: data.hosts.groom.father.isDeceased || groomFatherName.length === 0 },
+          { role: '신랑 어머님', name: groomMotherName, phone: data.hosts.groom.mother.phone, hidden: data.hosts.groom.mother.isDeceased || groomMotherName.length === 0 },
+          { role: '신부 아버님', name: brideFatherName, phone: data.hosts.bride.father.phone, hidden: data.hosts.bride.father.isDeceased || brideFatherName.length === 0 },
+          { role: '신부 어머님', name: brideMotherName, phone: data.hosts.bride.mother.phone, hidden: data.hosts.bride.mother.isDeceased || brideMotherName.length === 0 },
+        ]
+          .filter((row) => !row.hidden)
+          .filter((row) => (row.phone ?? '').trim().length > 0);
+
+        if (contactRows.length === 0) {
+          return (
+            <div className="max-w-[340px] mx-auto w-full rounded-xl border border-dashed border-border py-8 text-[0.8125em] text-on-surface-30">
+              신랑신부 섹션에서 연락처를 입력해 주세요.
+            </div>
+          );
+        }
+
+        return (
+          <div className="mx-auto w-full space-y-4">
+            {hasParentsText ? (
+              <div className="space-y-1 text-[0.875em] text-on-surface-20 tracking-tight text-center">
+                <div className="min-h-[27px] flex items-center justify-center" style={{ fontSize: '14px', gap: '8px' }}>
+                  {groomParentsText ? (
+                    <div className="flex items-center gap-1">
+                      {groomParentsInline} 의 아들
+                    </div>
+                  ) : ''}
+                  <span className="font-semibold text-on-surface-10">{groomName}</span>
+                </div>
+                <div className="min-h-[27px] flex items-center justify-center" style={{ fontSize: '14px', gap: '8px' }}>
+                  {brideParentsText ? (
+                    <div className="flex items-center gap-1">
+                      {brideParentsInline} 의 딸
+                    </div>
+                  ) : ''}
+                  <span className="font-semibold text-on-surface-10">{brideName}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="min-h-[27px] flex items-center justify-center text-[18px] text-on-surface-20 tracking-tight text-center">
+                신랑 <span className="font-semibold text-on-surface-10">{groomName}</span>
+                <span className="mx-2 text-on-surface-30">·</span>
+                신부 <span className="font-semibold text-on-surface-10">{brideName}</span>
+              </p>
+            )}
+
+            {contactEnabled && (
+              <div className="w-full rounded-2xl border border-border bg-white/85 pt-0 pb-0 px-0 shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setContactPreviewExpanded((prev) => !prev)}
+                  className="w-full h-11 rounded-t-[inherit] rounded-b-none bg-transparent text-[0.95em] text-on-surface-20 inline-flex items-center justify-center gap-2 hover:bg-[color:var(--surface-10)] transition-colors"
+                  aria-expanded={contactPreviewExpanded}
+                  aria-label="연락처 상세 열기"
+                >
+                  <Phone className="w-4.5 h-4.5" />
+                  <span>연락하기</span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${contactPreviewExpanded ? 'rotate-180' : ''}`} />
+                </button>
+
+                {contactPreviewExpanded ? (
+                  <div className="mt-2 mx-2 mb-2 space-y-0 animate-[preview-fade-in_220ms_ease-out_forwards]">
+                    {contactRows.map((row) => {
+                      const phone = (row.phone ?? '').trim();
+                      return (
+                      <div key={row.role} className="rounded-xl mb-0 bg-white px-3 py-2.5 flex items-center justify-between gap-2">
+                        <div className="min-w-0 text-left">
+                          <p className="text-[15px] font-medium tracking-[0.06em] text-on-surface-30">{row.role}</p>
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 shrink-0">
+                          <a
+                            href={`tel:${phone}`}
+                            className="w-8 h-8 rounded-full inline-flex items-center justify-center border border-border bg-[color:var(--surface-20)] text-on-surface-30 hover:bg-[color:var(--surface-10)]"
+                            aria-label={`${row.name} 전화하기`}
+                            onClick={(event) => {
+                              if (!phone) {
+                                event.preventDefault();
+                                return;
+                              }
+                              const shouldCall = window.confirm(`${row.name}님에게 전화를 거시겠어요?`);
+                              if (!shouldCall) {
+                                event.preventDefault();
+                              }
+                            }}
+                          >
+                            <Phone className="w-4 h-4" />
+                          </a>
+                          <a
+                            href={`sms:${phone}`}
+                            className="w-8 h-8 rounded-full inline-flex items-center justify-center border border-border bg-[color:var(--surface-20)] text-on-surface-30 hover:bg-[color:var(--surface-10)]"
+                            aria-label={`${row.name} 문자 보내기`}
+                            onClick={(event) => {
+                              if (!phone) {
+                                event.preventDefault();
+                                return;
+                              }
+                              const shouldSendMessage = window.confirm(`${row.name}님에게 문자를 보내시겠어요?`);
+                              if (!shouldSendMessage) {
+                                event.preventDefault();
+                              }
+                            }}
+                          >
+                            <MessageCircle className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    )})}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         );
       }
@@ -2086,6 +2361,12 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
         const dateText = (data.eventInfo.date ?? "").trim();
         const eventDate = dateText ? new Date(`${dateText}T00:00:00`) : null;
         const isValidEventDate = !!eventDate && Number.isFinite(eventDate.getTime());
+        const weekdayText = isValidEventDate
+          ? ["일", "월", "화", "수", "목", "금", "토"][eventDate!.getDay()]
+          : "";
+        const formattedDateWithWeekday = isValidEventDate
+          ? `${eventDate!.getFullYear()}년 ${String(eventDate!.getMonth() + 1).padStart(2, "0")}월 ${String(eventDate!.getDate()).padStart(2, "0")}일 · ${weekdayText}요일`
+          : data.eventInfo.date;
         const showCalendar = !!(data.eventInfo as any)?.useCalendar;
         const showDday = !!(data.eventInfo as any)?.showDday;
 
@@ -2103,6 +2384,9 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           else if (diffDays < 0) ddayStatusText = `${absDays}일 지났습니다`;
           else ddayStatusText = "오늘입니다";
         }
+        const ddayMatch = ddayStatusText.match(/^(\d+)(일 .+)$/);
+        const ddayNumber = ddayMatch?.[1] ?? "";
+        const ddaySuffix = ddayMatch?.[2] ?? ddayStatusText;
 
         let monthLabel = "";
         let calendarCells: Array<{ key: string; day?: number; isEvent?: boolean }> = [];
@@ -2126,50 +2410,52 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
 
         return (
           <div className="max-w-full w-full mx-auto space-y-3 text-[0.8125em] text-on-surface-20">
-            <div className="flex items-center justify-center gap-2">
-              <p className="text-[0.875em] font-semibold text-on-surface-10">
-                {data.eventInfo.date} · {data.eventInfo.time}
-              </p>
-              {ddayLabel && !showCalendar && (
-                <span className="h-6 px-2 rounded-full bg-[color:var(--primary-container)] text-[color:var(--on-primary-container)] text-[0.75em] font-semibold inline-flex items-center">
-                  {ddayLabel}
-                </span>
-              )}
-            </div>
-
             {showCalendar && isValidEventDate && (
-              <div className="w-full rounded-none border-0 bg-[color:var(--primary-container)] p-0 text-left shadow-none">
-                <div className="flex items-center justify-between">
-                  <p className="text-[0.75em] font-semibold text-[color:var(--on-primary-container)]">WEDDING CALENDAR</p>
-                  <p className="text-[0.75em] text-[color:var(--on-primary-container)]/80">{monthLabel}</p>
-                </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-[clamp(12px,1.2vw,12px)] text-[color:var(--on-primary-container)]/70">
-                  {["일", "월", "화", "수", "목", "금", "토"].map((w) => (
-                    <span key={w}>{w}</span>
-                  ))}
-                </div>
-                <div className="grid grid-cols-7 gap-1">
-                  {calendarCells.map((cell) => (
-                    <div
-                      key={cell.key}
-                      className={[
-                        // 달력 셀: 가로/세로 고정해서 정사각형 비율 유지 + 원형 스타일
-                        "h-8 w-8 rounded-full flex items-center justify-center text-[12px] justify-self-center leading-none",
-                        cell.day
-                          ? cell.isEvent
-                            ? "bg-[color:var(--key)] text-white font-semibold shadow-sm"
-                            : "text-[color:var(--on-primary-container)]/85"
-                          : "",
-                      ].join(" ")}
-                    >
-                      {cell.day ?? ""}
+              <div className="w-full rounded-none border-0 bg-[color:var(--primary-container)] px-0 py-10 text-left shadow-none mt-0 mb-0 flex flex-col gap-10">
+                <div className="flex h-fit items-center justify-center mx-0">
+                    <div className="text-center text-[16px] text-[color:var(--on-primary-container)]/80 mb-0">
+                      <p>{formattedDateWithWeekday}</p>
+                      <p className="text-[18px] mt-1 font-medium">{data.eventInfo.time}</p>
                     </div>
-                  ))}
+                </div>
+                <div className="mx-10">
+                  <div className="grid grid-cols-7 gap-1 px-0 text-center text-[clamp(12px,1.2vw,12px)] text-[color:var(--on-primary-container)]/70">
+                    {["일", "월", "화", "수", "목", "금", "토"].map((w) => (
+                      <span key={w}>{w}</span>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {calendarCells.map((cell) => (
+                      <div
+                        key={cell.key}
+                        className={[
+                          // 달력 셀: 가로/세로 고정해서 정사각형 비율 유지 + 원형 스타일
+                          "h-8 w-8 rounded-full flex items-center justify-center text-[12px] justify-self-center leading-none",
+                          cell.day
+                            ? cell.isEvent
+                              ? "bg-[color:var(--key)] text-white font-semibold shadow-sm"
+                              : "text-[color:var(--on-primary-container)]/85"
+                            : "",
+                        ].join(" ")}
+                      >
+                        {cell.day ?? ""}
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {ddayStatusText && (
-                  <div className="w-full text-center text-[0.95em] font-semibold text-on-surface-10 leading-none">
-                    신랑 <span className="text-red-500">&hearts;</span> 신부의 결혼식이 {ddayStatusText}.
+                  <div className="w-full text-center text-[16px] font-normal text-on-surface-10 leading-none">
+                    신랑 <span className="text-[color:var(--key)]">&hearts;</span> 신부의 결혼식이{" "}
+                    {ddayNumber ? (
+                      <>
+                        <span className="text-[color:var(--key-dark)]">{ddayNumber}</span>
+                        {ddaySuffix}
+                      </>
+                    ) : (
+                      ddayStatusText
+                    )}
+                    .
                   </div>
                 )}
               </div>
@@ -3003,7 +3289,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
           <div className="w-full border-t border-border mb-4"></div>
           
           <div className="w-full text-center mb-2"><span className="text-[12px] font-bold text-on-surface-30">선택 사항</span></div>
-          <div className="flex flex-col gap-y-2 pb-10 w-full items-center">
+          <div className="flex flex-col gap-y-2 pb-5 w-full items-center">
             {orderedContentOptionalItems.map((item) => {
               const isActive = activeSection === item.id;
               const isDisabled = item.hasSwitch && !isSectionEnabled(item.id);
@@ -3032,7 +3318,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
 
           <div className="w-full border-t border-border mb-4"></div>
           <div className="w-full text-center mb-2"><span className="text-[12px] font-bold text-on-surface-30">옵션</span></div>
-          <div className="flex flex-col gap-y-2 pb-10 w-full items-center">
+          <div className="flex flex-col gap-y-2 pb-5 w-full items-center">
             {otherOptionItems.map((item) => {
               const isActive = activeSection === item.id;
               const isDisabled = item.hasSwitch && !isSectionEnabled(item.id);
@@ -3774,154 +4060,94 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
                       {/* 신랑신부 섹션 (입력 폼 + 요약 레이아웃) */}
                       {item.id === 'hosts' && (
                         <>
-                          <FormItem label="옵션">
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
-                              onClick={() => setShowHostContacts(!showHostContacts)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') setShowHostContacts(!showHostContacts);
-                              }}
-                            >
-                              <CircleCheckbox
-                                checked={showHostContacts}
-                                onChange={(e) => setShowHostContacts(e.target.checked)}
-                              />
-                              연락처 추가
-                            </span>
-                          </FormItem>
-
                           <div className="flex flex-col gap-5">
-                            <FormItem label="신랑">
-                              <Input
-                                placeholder="이름"
-                                value={data.hosts.groom.name}
-                                onChange={(e) => updateData('hosts.groom.name', e.target.value)}
-                                className="flex-1 shadow-none"
-                              />
-                            </FormItem>
-                            {showHostContacts && (
-                              <FormItem label="">
-                                <Input
-                                  placeholder="연락처"
-                                  value={data.hosts.groom.phone}
-                                  onChange={(e) => updateData('hosts.groom.phone', e.target.value)}
-                                  className="flex-1 shadow-none"
+                            <FormItem label="옵션">
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="inline-flex items-center gap-2 text-[13px] text-on-surface-20 select-none cursor-pointer"
+                                onClick={() => {
+                                  const nextChecked = !isSectionEnabled('contact');
+                                  setSectionEnabled((prev) => ({ ...prev, contact: nextChecked }));
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    const nextChecked = !isSectionEnabled('contact');
+                                    setSectionEnabled((prev) => ({ ...prev, contact: nextChecked }));
+                                  }
+                                }}
+                              >
+                                <CircleCheckbox
+                                  checked={isSectionEnabled('contact')}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSectionEnabled((prev) => ({ ...prev, contact: checked }));
+                                  }}
                                 />
-                              </FormItem>
-                            )}
-                            <FormItem label="부">
-                              <Input
-                                placeholder="이름"
-                                value={data.hosts.groom.father.name}
-                                onChange={(e) => updateData('hosts.groom.father.name', e.target.value)}
-                                className="flex-1 shadow-none"
-                              />
-                              <span className="text-base font-medium text-on-surface-30 whitespace-nowrap ml-2">故</span>
-                              <CircleCheckbox
-                                checked={data.hosts.groom.father.isDeceased}
-                                onChange={(e) => updateData('hosts.groom.father.isDeceased', e.target.checked)}
-                              />
+                                연락처 추가
+                              </span>
                             </FormItem>
-                            {showHostContacts && !data.hosts.groom.father.isDeceased && (
-                              <FormItem label="">
-                                <Input
-                                  placeholder="연락처"
-                                  value={data.hosts.groom.father.phone}
-                                  onChange={(e) => updateData('hosts.groom.father.phone', e.target.value)}
-                                  className="flex-1 shadow-none"
-                                />
-                              </FormItem>
-                            )}
-                            <FormItem label="모">
-                              <Input
-                                placeholder="이름"
-                                value={data.hosts.groom.mother.name}
-                                onChange={(e) => updateData('hosts.groom.mother.name', e.target.value)}
-                                className="flex-1 shadow-none"
-                              />
-                              <span className="text-base font-medium text-on-surface-30 whitespace-nowrap ml-2">故</span>
-                              <CircleCheckbox
-                                checked={data.hosts.groom.mother.isDeceased}
-                                onChange={(e) => updateData('hosts.groom.mother.isDeceased', e.target.checked)}
-                              />
-                            </FormItem>
-                            {showHostContacts && !data.hosts.groom.mother.isDeceased && (
-                              <FormItem label="">
-                                <Input
-                                  placeholder="연락처"
-                                  value={data.hosts.groom.mother.phone}
-                                  onChange={(e) => updateData('hosts.groom.mother.phone', e.target.value)}
-                                  className="flex-1 shadow-none"
-                                />
-                              </FormItem>
-                            )}
+                            <HostContactField
+                              label="신랑"
+                              nameValue={data.hosts.groom.name}
+                              onNameChange={(value) => updateData('hosts.groom.name', value)}
+                              phoneValue={data.hosts.groom.phone}
+                              onPhoneChange={(value) => updateData('hosts.groom.phone', value)}
+                              showPhone={isSectionEnabled('contact')}
+                            />
+                            <HostContactField
+                              label="부"
+                              nameValue={data.hosts.groom.father.name}
+                              onNameChange={(value) => updateData('hosts.groom.father.name', value)}
+                              phoneValue={data.hosts.groom.father.phone}
+                              onPhoneChange={(value) => updateData('hosts.groom.father.phone', value)}
+                              showPhone={isSectionEnabled('contact') && !data.hosts.groom.father.isDeceased}
+                              deceasedChecked={data.hosts.groom.father.isDeceased}
+                              onDeceasedChange={(checked) => updateData('hosts.groom.father.isDeceased', checked)}
+                              keepDeceasedInline
+                            />
+                            <HostContactField
+                              label="모"
+                              nameValue={data.hosts.groom.mother.name}
+                              onNameChange={(value) => updateData('hosts.groom.mother.name', value)}
+                              phoneValue={data.hosts.groom.mother.phone}
+                              onPhoneChange={(value) => updateData('hosts.groom.mother.phone', value)}
+                              showPhone={isSectionEnabled('contact') && !data.hosts.groom.mother.isDeceased}
+                              deceasedChecked={data.hosts.groom.mother.isDeceased}
+                              onDeceasedChange={(checked) => updateData('hosts.groom.mother.isDeceased', checked)}
+                              keepDeceasedInline
+                            />
                             <div className="border-t border-dashed border-[color:var(--border-20)]" />
-                            <FormItem label="신부">
-                              <Input
-                                placeholder="이름"
-                                value={data.hosts.bride.name}
-                                onChange={(e) => updateData('hosts.bride.name', e.target.value)}
-                                className="flex-1 shadow-none"
-                              />
-                            </FormItem>
-                            {showHostContacts && (
-                              <FormItem label="">
-                                <Input
-                                  placeholder="연락처"
-                                  value={data.hosts.bride.phone}
-                                  onChange={(e) => updateData('hosts.bride.phone', e.target.value)}
-                                  className="flex-1 shadow-none"
-                                />
-                              </FormItem>
-                            )}
-                            <FormItem label="부">
-                              <Input
-                                placeholder="이름"
-                                value={data.hosts.bride.father.name}
-                                onChange={(e) => updateData('hosts.bride.father.name', e.target.value)}
-                                className="flex-1 shadow-none"
-                              />
-                              <span className="text-base font-medium text-on-surface-30 whitespace-nowrap ml-2">故</span>
-                              <CircleCheckbox
-                                checked={data.hosts.bride.father.isDeceased}
-                                onChange={(e) => updateData('hosts.bride.father.isDeceased', e.target.checked)}
-                              />
-                            </FormItem>
-                            {showHostContacts && !data.hosts.bride.father.isDeceased && (
-                              <FormItem label="">
-                                <Input
-                                  placeholder="연락처"
-                                  value={data.hosts.bride.father.phone}
-                                  onChange={(e) => updateData('hosts.bride.father.phone', e.target.value)}
-                                  className="flex-1 shadow-none"
-                                />
-                              </FormItem>
-                            )}
-                            <FormItem label="모">
-                              <Input
-                                placeholder="이름"
-                                value={data.hosts.bride.mother.name}
-                                onChange={(e) => updateData('hosts.bride.mother.name', e.target.value)}
-                                className="flex-1 shadow-none"
-                              />
-                              <span className="text-base font-medium text-on-surface-30 whitespace-nowrap ml-2">故</span>
-                              <CircleCheckbox
-                                checked={data.hosts.bride.mother.isDeceased}
-                                onChange={(e) => updateData('hosts.bride.mother.isDeceased', e.target.checked)}
-                              />
-                            </FormItem>
-                            {showHostContacts && !data.hosts.bride.mother.isDeceased && (
-                              <FormItem label="">
-                                <Input
-                                  placeholder="연락처"
-                                  value={data.hosts.bride.mother.phone}
-                                  onChange={(e) => updateData('hosts.bride.mother.phone', e.target.value)}
-                                  className="flex-1 shadow-none"
-                                />
-                              </FormItem>
-                            )}
+                            <HostContactField
+                              label="신부"
+                              nameValue={data.hosts.bride.name}
+                              onNameChange={(value) => updateData('hosts.bride.name', value)}
+                              phoneValue={data.hosts.bride.phone}
+                              onPhoneChange={(value) => updateData('hosts.bride.phone', value)}
+                              showPhone={isSectionEnabled('contact')}
+                            />
+                            <HostContactField
+                              label="부"
+                              nameValue={data.hosts.bride.father.name}
+                              onNameChange={(value) => updateData('hosts.bride.father.name', value)}
+                              phoneValue={data.hosts.bride.father.phone}
+                              onPhoneChange={(value) => updateData('hosts.bride.father.phone', value)}
+                              showPhone={isSectionEnabled('contact') && !data.hosts.bride.father.isDeceased}
+                              deceasedChecked={data.hosts.bride.father.isDeceased}
+                              onDeceasedChange={(checked) => updateData('hosts.bride.father.isDeceased', checked)}
+                              keepDeceasedInline
+                            />
+                            <HostContactField
+                              label="모"
+                              nameValue={data.hosts.bride.mother.name}
+                              onNameChange={(value) => updateData('hosts.bride.mother.name', value)}
+                              phoneValue={data.hosts.bride.mother.phone}
+                              onPhoneChange={(value) => updateData('hosts.bride.mother.phone', value)}
+                              showPhone={isSectionEnabled('contact') && !data.hosts.bride.mother.isDeceased}
+                              deceasedChecked={data.hosts.bride.mother.isDeceased}
+                              onDeceasedChange={(checked) => updateData('hosts.bride.mother.isDeceased', checked)}
+                              keepDeceasedInline
+                            />
                           </div>
                         </>
                       )}
@@ -5433,7 +5659,7 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
         </section>
 
         {/* 3. 우측 미리보기 패널 (화면 전체 높이, 위아래 20px 간격) */}
-        <main className="hidden flex-1 flex-col items-center min-h-0 overflow-hidden py-5 px-6 bg-gray-50 shadow-none">
+        <main className="flex flex-1 flex-col items-center min-h-0 overflow-hidden py-5 px-6 bg-gray-50 shadow-none">
           {/* 바깥 컨테이너는 고정, 내부 프레임만 스크롤 */}
           <div className="flex-1 min-h-0 flex justify-center w-full max-w-[400px] min-h-full bg-transparent items-stretch shadow-none">
             <div
@@ -5454,43 +5680,74 @@ export default function BuilderPageClient({ initialParams, initialSearchParams }
               }
             >
               <ParticleCanvasOverlay effect={(data.theme as any)?.particleEffect ?? 'none'} />
-              {!((data as any).billing?.isPaid) && (
-                <div
-                  className="absolute inset-0 z-[15] pointer-events-none overflow-hidden"
-                  aria-hidden
-                >
-                  <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-16 p-6 opacity-[0.12]">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <span
-                        key={i}
-                        className="rotate-[-24deg] text-[clamp(14px,4vw,22px)] font-black text-on-surface-10 whitespace-nowrap select-none"
-                      >
-                        SAMPLE · 미리보기
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div ref={previewScrollRef} className="flex-1 overflow-y-auto no-scrollbar">
-                {layoutOrder.map((sectionId) => (
+                {layoutOrder.includes('main') && (
                   <div
-                    key={sectionId}
-                    data-preview-section-id={sectionId}
-                    className={`${sectionId === 'main'
-                      ? "w-full flex flex-col items-stretch text-center"
-                      : sectionId === 'eventInfo' && (data.eventInfo as any)?.useCalendar
-                        ? "w-full p-0 flex flex-col items-center text-center"
-                        : "w-full py-6 px-6 flex flex-col items-center text-center"
-                      } ${data.theme.scrollEffect
-                        ? (previewVisibleSections[sectionId]
-                          ? 'opacity-100 translate-y-0 duration-500 ease-out'
-                          : 'opacity-0 translate-y-3 duration-500 ease-out')
-                        : 'opacity-100 translate-y-0'
-                      } transition-[opacity,transform]`}
+                    data-preview-section-id="main"
+                    className={`w-full flex flex-col items-stretch text-center ${data.theme.scrollEffect
+                      ? (previewVisibleSections.main
+                        ? 'opacity-100 translate-y-0 duration-500 ease-out'
+                        : 'opacity-0 translate-y-3 duration-500 ease-out')
+                      : 'opacity-100 translate-y-0'
+                    } transition-[opacity,transform]`}
                   >
-                    {renderPreviewSection(sectionId)}
+                    {renderPreviewSection('main')}
                   </div>
-                ))}
+                )}
+                {layoutOrder.includes('hosts') && (
+                  <div className="w-full py-8 px-6 flex flex-col items-center text-center">
+                    <div className="w-full max-w-[340px] mx-auto space-y-5">
+                      <p className="text-[2em] font-medium tracking-[0.02em] text-on-surface-10 leading-none">
+                        {(data.hosts.groom.name ?? '').trim() || '신랑'}
+                        <span className="mx-4 text-on-surface-30">|</span>
+                        {(data.hosts.bride.name ?? '').trim() || '신부'}
+                      </p>
+                      <div className="space-y-2 text-on-surface-30">
+                        <p className="text-[1.5em] leading-relaxed">
+                          {(() => {
+                            const eventDateText = (data.eventInfo.date ?? '').trim();
+                            const eventDate = eventDateText ? new Date(`${eventDateText}T00:00:00`) : null;
+                            const hasValidDate = !!eventDate && Number.isFinite(eventDate.getTime());
+                            const weekday = hasValidDate
+                              ? ['일', '월', '화', '수', '목', '금', '토'][eventDate!.getDay()]
+                              : '';
+                            const summaryDateLine = hasValidDate
+                              ? `${eventDate!.getFullYear()}년 ${eventDate!.getMonth() + 1}월 ${eventDate!.getDate()}일 ${weekday}요일`
+                              : eventDateText;
+                            const summaryTimeLine = (data.eventInfo.time ?? '').trim();
+                            return `${summaryDateLine}${summaryTimeLine ? ` ${summaryTimeLine}` : ''}`;
+                          })()}
+                        </p>
+                        {!!(data.eventInfo.venueName ?? '').trim() && (
+                          <p className="text-[1.5em] leading-relaxed">{(data.eventInfo.venueName ?? '').trim()}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {layoutOrder.filter((sectionId) => sectionId !== 'main').map((sectionId) => {
+                  const previewRenderId = sectionId === 'hosts' ? 'contact' : sectionId;
+                  return (
+                    <React.Fragment key={sectionId}>
+                      <div
+                        data-preview-section-id={sectionId}
+                        className={`${sectionId === 'main'
+                          ? "w-full flex flex-col items-stretch text-center"
+                          : sectionId === 'eventInfo' && (data.eventInfo as any)?.useCalendar
+                            ? "w-full p-0 flex flex-col items-center text-center"
+                            : "w-full py-6 px-6 flex flex-col items-center text-center"
+                          } ${data.theme.scrollEffect
+                            ? (previewVisibleSections[sectionId]
+                              ? 'opacity-100 translate-y-0 duration-500 ease-out'
+                              : 'opacity-0 translate-y-3 duration-500 ease-out')
+                            : 'opacity-100 translate-y-0'
+                          } transition-[opacity,transform]`}
+                      >
+                        {renderPreviewSection(previewRenderId)}
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
               </div>
               {isBgmEnabled && (
                 <button
